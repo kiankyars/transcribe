@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kian.transcribe</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__RUN_SCRIPT__</string>
+    </array>
+    <key>WatchPaths</key>
+    <array>
+        <string>__WATCH_NOTES__</string>
+        <string>__WATCH_COURSE__</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__WORK_DIR__</string>
+    <key>StandardOutPath</key>
+    <string>__STDOUT_LOG__</string>
+    <key>StandardErrorPath</key>
+    <string>__STDERR_LOG__</string>
+</dict>
+</plist>
