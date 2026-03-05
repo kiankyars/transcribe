@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +15,7 @@ from send2trash import send2trash
 load_dotenv()
 
 MODEL_FALLBACKS = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+DEFAULT_ERROR_LOG = Path(__file__).resolve().parent / "logs" / "transcribe_errors.log"
 
 
 @dataclass(frozen=True)
@@ -33,14 +33,15 @@ def required_env(name: str) -> str:
 
 def load_config() -> tuple[genai.Client, dict[str, BucketConfig], Path]:
     client = genai.Client(api_key=required_env("GEMINI_API_KEY"))
-    notes_source = Path(required_env("NOTES_VOICE_MEMOS_DIR")).expanduser()
-    course_source = Path(required_env("COURSE_VOICE_MEMOS_DIR")).expanduser()
-    notes_target = Path(required_env("OBSIDIAN_NOTES_DIR")).expanduser()
-    course_target = Path(required_env("OBSIDIAN_COURSE_DIR")).expanduser()
-    error_log = Path(required_env("TRANSCRIBE_ERROR_LOG")).expanduser()
+    source_dir_0 = Path(required_env("VOICE_MEMOS_DIR_0")).expanduser()
+    source_dir_1 = Path(required_env("VOICE_MEMOS_DIR_1")).expanduser()
+    obsidian_base = Path(required_env("OBSIDIAN_BASE_DIR")).expanduser()
+    notes_target = obsidian_base / "notes"
+    course_target = obsidian_base / "course"
+    error_log = DEFAULT_ERROR_LOG
     buckets = {
-        "notes": BucketConfig(notes_source, notes_target),
-        "course": BucketConfig(course_source, course_target),
+        "notes": BucketConfig(source_dir_0, notes_target),
+        "course": BucketConfig(source_dir_1, course_target),
     }
     return client, buckets, error_log
 
@@ -94,12 +95,10 @@ def format_transcript_as_bullets(
             return (response.text or "").strip()
         except errors.APIError as err:
             fallback_errors.append(f"{model_name}: {err}")
-            sys.stderr.write(f"{err}\n")
-            log_error(error_log, str(err))
+
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     details = " | ".join(fallback_errors) if fallback_errors else "no model error captured"
     message = f"[{timestamp}] Failed to process file: {audio_file}. All model fallbacks failed. Errors: {details}"
-    sys.stderr.write(f"{message}\n")
     log_error(error_log, message)
     return None
 

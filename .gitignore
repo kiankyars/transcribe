@@ -1,6 +1,5 @@
 __pycache__
 .venv
 uv.lock
-transcribe_errors.log
 .env
 logs/

@@ -3,9 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TEMPLATE_PATH="$REPO_DIR/launchd/com.kian.transcribe.plist.template"
-PLIST_OUT="$HOME/Library/LaunchAgents/com.kian.transcribe.plist"
-LABEL="com.kian.transcribe"
+TEMPLATE_PATH="$REPO_DIR/com.transcribe.plist.template"
+PLIST_OUT="$HOME/Library/LaunchAgents/com.transcribe.plist"
+LABEL="com.transcribe"
 LOG_DIR="$REPO_DIR/logs"
 
 if [ -f "$REPO_DIR/.env" ]; then
@@ -16,8 +16,8 @@ if [ -f "$REPO_DIR/.env" ]; then
 fi
 export REPO_DIR
 
-: "${NOTES_VOICE_MEMOS_DIR:?Set NOTES_VOICE_MEMOS_DIR in .env}"
-: "${COURSE_VOICE_MEMOS_DIR:?Set COURSE_VOICE_MEMOS_DIR in .env}"
+: "${VOICE_MEMOS_DIR_0:?Set VOICE_MEMOS_DIR_0 in .env}"
+: "${VOICE_MEMOS_DIR_1:?Set VOICE_MEMOS_DIR_1 in .env}"
 
 mkdir -p "$(dirname "$PLIST_OUT")" "$LOG_DIR"
 
@@ -31,8 +31,8 @@ repo = Path(os.environ["REPO_DIR"]).expanduser().resolve()
 run_script = str((repo / "run_transcribe.sh").resolve())
 replacements = {
     "__RUN_SCRIPT__": run_script,
-    "__WATCH_NOTES__": str(Path(os.environ["NOTES_VOICE_MEMOS_DIR"]).expanduser().resolve()),
-    "__WATCH_COURSE__": str(Path(os.environ["COURSE_VOICE_MEMOS_DIR"]).expanduser().resolve()),
+    "__WATCH_NOTES__": str(Path(os.environ["VOICE_MEMOS_DIR_0"]).expanduser().resolve()),
+    "__WATCH_COURSE__": str(Path(os.environ["VOICE_MEMOS_DIR_1"]).expanduser().resolve()),
     "__WORK_DIR__": str(repo),
     "__STDOUT_LOG__": str((repo / "logs" / "launchd_stdout.log").resolve()),
     "__STDERR_LOG__": str((repo / "logs" / "launchd_stderr.log").resolve()),

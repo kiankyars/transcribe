@@ -21,11 +21,11 @@ Transcribes `.m4a` voice memos from `notes` and `course` watch folders into dail
 Required env vars:
 
 - `GEMINI_API_KEY`
-- `NOTES_VOICE_MEMOS_DIR`
-- `COURSE_VOICE_MEMOS_DIR`
-- `OBSIDIAN_NOTES_DIR`
-- `OBSIDIAN_COURSE_DIR`
-- `TRANSCRIBE_ERROR_LOG`
+- `VOICE_MEMOS_DIR_0`
+- `VOICE_MEMOS_DIR_1`
+- `OBSIDIAN_BASE_DIR`
+
+Error logs are written to `logs/transcribe_errors.log` by default.
 
 ## Run manually
 
@@ -35,7 +35,7 @@ Required env vars:
 
 - `./scripts/install_launchd.sh`
 
-This installs `~/Library/LaunchAgents/com.kian.transcribe.plist` from the repo template and watches:
+This installs `~/Library/LaunchAgents/com.transcribe.plist` from the repo template and watches:
 
-- `NOTES_VOICE_MEMOS_DIR`
-- `COURSE_VOICE_MEMOS_DIR`
+- `VOICE_MEMOS_DIR_0`
+- `VOICE_MEMOS_DIR_1`
