@@ -21,6 +21,8 @@ Required env vars:
 - `VOICE_MEMOS_DIR_0`
 - `VOICE_MEMOS_DIR_1`
 - `OBSIDIAN_BASE_DIR`
+- `OBSIDIAN_SUBDIR_0`
+- `OBSIDIAN_SUBDIR_1`
 
 Error logs are written to `logs/transcribe_errors.log` by default.
 

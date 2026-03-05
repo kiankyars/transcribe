@@ -10,7 +10,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
-from send2trash import send2trash
 
 load_dotenv()
 
@@ -31,18 +30,18 @@ def required_env(name: str) -> str:
     return value
 
 
-def load_config() -> tuple[genai.Client, dict[str, BucketConfig], Path]:
+def load_config() -> tuple[genai.Client, list[BucketConfig], Path]:
     client = genai.Client(api_key=required_env("GEMINI_API_KEY"))
     source_dir_0 = Path(required_env("VOICE_MEMOS_DIR_0")).expanduser()
     source_dir_1 = Path(required_env("VOICE_MEMOS_DIR_1")).expanduser()
     obsidian_base = Path(required_env("OBSIDIAN_BASE_DIR")).expanduser()
-    notes_target = obsidian_base / "notes"
-    course_target = obsidian_base / "course"
+    target_dir_0 = obsidian_base / required_env("OBSIDIAN_SUBDIR_0")
+    target_dir_1 = obsidian_base / required_env("OBSIDIAN_SUBDIR_1")
     error_log = DEFAULT_ERROR_LOG
-    buckets = {
-        "notes": BucketConfig(source_dir_0, notes_target),
-        "course": BucketConfig(source_dir_1, course_target),
-    }
+    buckets = [
+        BucketConfig(source_dir_0, target_dir_0),
+        BucketConfig(source_dir_1, target_dir_1),
+    ]
     return client, buckets, error_log
 
 
@@ -83,7 +82,6 @@ def format_transcript_as_bullets(
 ) -> str | None:
     prompt = (
         "Convert this transcript into markdown hyphen bullets. "
-        "Keep bullets concise but complete by merging related fragments. "
         "Avoid over-splitting. Output bullets only."
     )
     audio_bytes = audio_file.read_bytes()
@@ -100,19 +98,18 @@ def format_transcript_as_bullets(
     details = " | ".join(fallback_errors) if fallback_errors else "no model error captured"
     message = f"[{timestamp}] Failed to process file: {audio_file}. All model fallbacks failed. Errors: {details}"
     log_error(error_log, message)
-    return None
 
 
 def append_with_spacing(target_file: Path, addition: str) -> None:
-    text = addition.strip()
+    text = "\n".join(line.rstrip() for line in addition.splitlines() if line.strip())
     if not text:
         return
     target_file.parent.mkdir(parents=True, exist_ok=True)
     current = target_file.read_text() if target_file.exists() else ""
     if current.strip():
-        target_file.write_text(current.rstrip("\n") + "\n\n" + text + "\n")
-        return
-    target_file.write_text(text + "\n")
+        target_file.write_text(current.rstrip("\n") + "\n" + text + "\n")
+    else:
+        target_file.write_text(text + "\n")
 
 
 def process_audio(
@@ -129,13 +126,13 @@ def process_audio(
     if bullets is None:
         return
     append_with_spacing(target_file, bullets)
-    send2trash(str(audio_file))
+    os.remove(str(audio_file))
 
 
 def main() -> None:
     client, buckets, error_log = load_config()
-    for bucket in ("notes", "course"):
-        source_dir = buckets[bucket].source_dir
+    for bucket in buckets:
+        source_dir = bucket.source_dir
         if not source_dir.exists():
             continue
         for audio_file in sorted(source_dir.iterdir()):
@@ -143,7 +140,7 @@ def main() -> None:
                 continue
             if audio_file.suffix.lower() != ".m4a":
                 continue
-            process_audio(client, audio_file, buckets[bucket], error_log)
+            process_audio(client, audio_file, bucket, error_log)
 
 
 if __name__ == "__main__":
