@@ -28,7 +28,7 @@ import sys
 
 template = Path(sys.argv[1]).read_text()
 repo = Path(os.environ["REPO_DIR"]).expanduser().resolve()
-run_script = str((repo / "run_transcribe.sh").resolve())
+run_script = str((repo / "src" / "run_transcribe.sh").resolve())
 replacements = {
     "__RUN_SCRIPT__": run_script,
     "__WATCH_NOTES__": str(Path(os.environ["VOICE_MEMOS_DIR_0"]).expanduser().resolve()),

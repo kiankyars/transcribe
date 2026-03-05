@@ -29,11 +29,11 @@ Error logs are written to `logs/transcribe_errors.log` by default.
 
 ## Run manually
 
-- `./run_transcribe.sh`
+- `./src/run_transcribe.sh`
 
 ## Install launchd watcher
 
-- `./scripts/install_launchd.sh`
+- `./src/install_launchd.sh`
 
 This installs `~/Library/LaunchAgents/com.transcribe.plist` from the repo template and watches:
 

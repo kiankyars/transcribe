@@ -15,7 +15,7 @@ from send2trash import send2trash
 load_dotenv()
 
 MODEL_FALLBACKS = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
-DEFAULT_ERROR_LOG = Path(__file__).resolve().parent / "logs" / "transcribe_errors.log"
+DEFAULT_ERROR_LOG = Path(__file__).resolve().parent.parent / "logs" / "transcribe_errors.log"
 
 
 @dataclass(frozen=True)
