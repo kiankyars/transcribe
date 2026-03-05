@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATE_PATH="$REPO_DIR/com.transcribe.plist.template"
-PLIST_OUT="$HOME/Library/LaunchAgents/com.transcribe.plist"
 LABEL="com.transcribe"
+PLIST_OUT="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="$REPO_DIR/logs"
 
 if [ -f "$REPO_DIR/.env" ]; then
@@ -15,6 +15,7 @@ if [ -f "$REPO_DIR/.env" ]; then
   set +a
 fi
 export REPO_DIR
+export LABEL
 
 : "${VOICE_MEMOS_DIR_0:?Set VOICE_MEMOS_DIR_0 in .env}"
 : "${VOICE_MEMOS_DIR_1:?Set VOICE_MEMOS_DIR_1 in .env}"
@@ -30,6 +31,7 @@ template = Path(sys.argv[1]).read_text()
 repo = Path(os.environ["REPO_DIR"]).expanduser().resolve()
 run_script = str((repo / "src" / "run_transcribe.sh").resolve())
 replacements = {
+    "__LABEL__": os.environ["LABEL"],
     "__RUN_SCRIPT__": run_script,
     "__WATCH_NOTES__": str(Path(os.environ["VOICE_MEMOS_DIR_0"]).expanduser().resolve()),
     "__WATCH_COURSE__": str(Path(os.environ["VOICE_MEMOS_DIR_1"]).expanduser().resolve()),
