@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -70,9 +71,17 @@ def file_flags(file_path: Path) -> str:
     return result.stdout.strip()
 
 
-def ensure_local_file(file_path: Path) -> None:
-    if "dataless" in file_flags(file_path):
-        subprocess.run(["brctl", "download", str(file_path)], check=False)
+def ensure_local_file(file_path: Path, timeout: int = 120, poll_interval: float = 2.0) -> bool:
+    """Download iCloud file and block until it's materialized. Returns True if local."""
+    if "dataless" not in file_flags(file_path):
+        return True
+    subprocess.run(["brctl", "download", str(file_path)], check=False)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if "dataless" not in file_flags(file_path):
+            return True
+        time.sleep(poll_interval)
+    return False
 
 
 def format_transcript_as_bullets(
@@ -86,13 +95,21 @@ def format_transcript_as_bullets(
     )
     audio_bytes = audio_file.read_bytes()
     contents = [prompt, types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp4")]
+    max_retries = 3
     fallback_errors: list[str] = []
     for model_name in MODEL_FALLBACKS:
-        try:
-            response = client.models.generate_content(model=model_name, contents=contents)
-            return (response.text or "").strip()
-        except errors.APIError as err:
-            fallback_errors.append(f"{model_name}: {err}")
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(model=model_name, contents=contents)
+                return (response.text or "").strip()
+            except errors.APIError as err:
+                fallback_errors.append(f"{model_name} (attempt {attempt + 1}): {err}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+            except Exception as err:
+                fallback_errors.append(f"{model_name} (attempt {attempt + 1}): {err}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     details = " | ".join(fallback_errors) if fallback_errors else "no model error captured"
@@ -118,7 +135,9 @@ def process_audio(
     bucket: BucketConfig,
     error_log: Path,
 ) -> None:
-    ensure_local_file(audio_file)
+    if not ensure_local_file(audio_file):
+        log_error(error_log, f"[{datetime.now():%Y-%m-%d %H:%M:%S}] Timed out downloading iCloud file: {audio_file}")
+        return
     recorded_at = extract_recorded_datetime(audio_file)
     date_str = recorded_at.strftime("%Y-%m-%d")
     target_file = bucket.target_dir / f"{date_str}.md"
