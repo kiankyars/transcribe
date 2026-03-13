@@ -13,6 +13,8 @@
         <string>__WATCH_NOTES__</string>
         <string>__WATCH_COURSE__</string>
     </array>
+    <key>StartInterval</key>
+    <integer>900</integer>
     <key>WorkingDirectory</key>
     <string>__WORK_DIR__</string>
     <key>StandardOutPath</key>

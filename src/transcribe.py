@@ -91,7 +91,7 @@ def format_transcript_as_bullets(
 ) -> str | None:
     prompt = (
         "Convert this transcript into markdown hyphen bullets. "
-        "Avoid over-splitting. Output bullets only. Do not modify the transcript."
+        "Avoid over-splitting. Output bullets only. Do not include timestamps. Do not modify the transcript."
     )
     audio_bytes = audio_file.read_bytes()
     contents = [prompt, types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp4")]
