@@ -8,7 +8,14 @@ from unittest.mock import Mock, patch
 
 from google.genai import errors, types
 
-from src.transcribe import format_transcript_as_bullets
+from src.simple_endpoints import SimpleEndpoint
+from src.transcribe import (
+    GEMINI_REQUEST_TIMEOUT_MS,
+    format_transcript_as_bullets,
+)
+from src.transcribe import (
+    main as run_simple_inbox,
+)
 from src.transcribe_audio import (
     audio_mime_type,
     build_prompt,
@@ -166,6 +173,51 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
             client.models.generate_content.call_args.kwargs["model"],
             "gemini-test-model",
         )
+        request_config = client.models.generate_content.call_args.kwargs["config"]
+        self.assertEqual(
+            request_config.http_options.timeout,
+            GEMINI_REQUEST_TIMEOUT_MS,
+        )
+
+    def test_simple_inbox_logs_timeout_and_retries_same_model(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            audio_file = Path(temp_dir) / "memo.m4a"
+            audio_file.write_bytes(b"audio")
+            client = Mock()
+            client.models.generate_content.side_effect = [
+                TimeoutError("request timed out"),
+                SimpleNamespace(text="- Hello"),
+            ]
+
+            with (
+                patch(
+                    "src.transcribe.configured_env",
+                    return_value="gemini-test-model",
+                ),
+                patch("src.transcribe.time.sleep"),
+                patch("src.transcribe.log_error") as log_error,
+            ):
+                transcript = format_transcript_as_bullets(
+                    client,
+                    audio_file,
+                    Path(temp_dir) / "errors.log",
+                )
+
+        self.assertEqual(transcript, "- Hello")
+        self.assertEqual(client.models.generate_content.call_count, 2)
+        self.assertTrue(
+            all(
+                call.kwargs["model"] == "gemini-test-model"
+                for call in client.models.generate_content.call_args_list
+            )
+        )
+        self.assertTrue(
+            all(
+                call.kwargs["config"].http_options.timeout == GEMINI_REQUEST_TIMEOUT_MS
+                for call in client.models.generate_content.call_args_list
+            )
+        )
+        self.assertIn("attempt 1: request timed out", log_error.call_args.args[1])
 
     def test_simple_inbox_retries_only_the_pinned_model(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -180,7 +232,7 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
                     return_value="gemini-test-model",
                 ),
                 patch("src.transcribe.time.sleep"),
-                patch("src.transcribe.log_error"),
+                patch("src.transcribe.log_error") as log_error,
             ):
                 transcript = format_transcript_as_bullets(
                     client,
@@ -196,6 +248,63 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
                 for call in client.models.generate_content.call_args_list
             )
         )
+        self.assertEqual(log_error.call_count, 4)
+        final_log = log_error.call_args_list[-1].args[1]
+        self.assertIn("attempt 1: unavailable", final_log)
+        self.assertIn("attempt 2: unavailable", final_log)
+        self.assertIn("attempt 3: unavailable", final_log)
+
+    def test_timed_out_file_does_not_block_the_rest_of_the_queue(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            source_dir = temp_path / "course"
+            source_dir.mkdir()
+            first = source_dir / "2026-08-11 10.00.00.m4a"
+            second = source_dir / "2026-08-11 10.01.00.m4a"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            daily_dir = temp_path / "notes"
+            error_log = temp_path / "errors.log"
+            client = Mock()
+            client.models.generate_content.side_effect = [
+                TimeoutError("request timed out"),
+                TimeoutError("request timed out"),
+                TimeoutError("request timed out"),
+                SimpleNamespace(text="- Second recording"),
+            ]
+            source = SimpleEndpoint("course", "## Course", source_dir)
+
+            with (
+                patch(
+                    "src.transcribe.load_config",
+                    return_value=(client, [source], daily_dir, error_log),
+                ),
+                patch(
+                    "src.transcribe.configured_env",
+                    return_value="gemini-test-model",
+                ),
+                patch("src.transcribe.ensure_local_file", return_value=True),
+                patch("src.transcribe.time.sleep"),
+                patch("src.transcribe.trash_file") as trash_file,
+            ):
+                run_simple_inbox()
+
+            note = (daily_dir / "2026-08-11.md").read_text()
+
+        self.assertEqual(client.models.generate_content.call_count, 4)
+        trash_file.assert_called_once_with(second)
+        self.assertIn("## Course\n\n- Second recording", note)
+        self.assertNotIn("first", note.lower())
+
+
+class SimpleIngestWrapperTests(unittest.TestCase):
+    def test_wrapper_does_not_run_vault_wide_git_sync(self) -> None:
+        wrapper_path = Path(__file__).resolve().parent / "run_simple_ingest.sh"
+        wrapper = wrapper_path.read_text()
+
+        self.assertIn('"$PYTHON_BIN" src/transcribe.py', wrapper)
+        self.assertNotIn("daily_git_sync.sh", wrapper)
+        self.assertNotIn("/Users/kian/obsidian/scripts", wrapper)
 
 
 if __name__ == "__main__":

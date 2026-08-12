@@ -5,12 +5,15 @@ Transcribes `.m4a` voice memos into Obsidian notes and can also process routed V
 ## Behavior
 
 - For each simple-inbox audio file, it generates markdown hyphen bullets.
+- Each Gemini request has a two-minute deadline; timed-out attempts are logged and
+  use the existing same-model retry path without holding the rest of the queue forever.
 - It writes into `notes/YYYY-MM-DD.md`:
   - files from the resolved `notes` inbox append into the root body of the daily note
   - files from the resolved `course` inbox append into `## Course`
   - if the daily note does not exist, it is created
 - `notes` is the catch-all simple inbox for podcasts, books, reading thoughts, and other uncategorized captures.
 - After a simple-ingest `.m4a` is successfully appended into the daily note, the source file is moved to macOS Trash.
+- Simple ingestion does not stage, commit, or push vault changes.
 - Agentic Voice Memos processing:
   - watches the macOS Voice Memos store and also scans every eight minutes as a fallback for coalesced filesystem events
   - rescans recordings that arrive or finish syncing during an active importer run before exiting

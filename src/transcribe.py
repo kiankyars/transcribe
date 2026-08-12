@@ -32,6 +32,7 @@ except ImportError:
 load_dotenv()
 
 DEFAULT_ERROR_LOG = Path(__file__).resolve().parent.parent / "logs" / "siri_errors.log"
+GEMINI_REQUEST_TIMEOUT_MS = 120_000
 HEADING_RE = re.compile(r"(?m)^## .*$")
 
 
@@ -72,20 +73,28 @@ def format_transcript_as_bullets(
     )
     audio_bytes = audio_file.read_bytes()
     contents = [prompt, types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp4")]
+    request_config = types.GenerateContentConfig(
+        http_options=types.HttpOptions(timeout=GEMINI_REQUEST_TIMEOUT_MS)
+    )
     max_retries = 3
     attempt_errors: list[str] = []
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
-                model=model_name, contents=contents
+                model=model_name,
+                contents=contents,
+                config=request_config,
             )
             return (response.text or "").strip()
-        except errors.APIError as err:
-            attempt_errors.append(f"attempt {attempt + 1}: {err}")
-            if attempt < max_retries - 1:
-                time.sleep(2**attempt)
         except Exception as err:  # noqa: BLE001 - retry transient SDK failures
-            attempt_errors.append(f"attempt {attempt + 1}: {err}")
+            attempt_error = f"attempt {attempt + 1}: {err}"
+            attempt_errors.append(attempt_error)
+            if not isinstance(err, errors.APIError):
+                log_error(
+                    error_log,
+                    f"[{local_now():%Y-%m-%d %H:%M:%S}] "
+                    f"Gemini request failed for {audio_file} ({attempt_error})",
+                )
             if attempt < max_retries - 1:
                 time.sleep(2**attempt)
 
@@ -93,7 +102,10 @@ def format_transcript_as_bullets(
     details = (
         " | ".join(attempt_errors) if attempt_errors else "no model error captured"
     )
-    message = f"[{timestamp}] Failed to process file with {model_name}: {audio_file}. Errors: {details}"
+    message = (
+        f"[{timestamp}] Failed to process file with {model_name}: "
+        f"{audio_file}. Errors: {details}"
+    )
     log_error(error_log, message)
 
 
@@ -112,7 +124,11 @@ def insert_into_root(current_text: str, addition: str) -> str:
     heading_match = HEADING_RE.search(current_text)
     if heading_match is None:
         return join_blocks(current_text, addition)
-    return join_blocks(current_text[: heading_match.start()], addition, current_text[heading_match.start() :])
+    return join_blocks(
+        current_text[: heading_match.start()],
+        addition,
+        current_text[heading_match.start() :],
+    )
 
 
 def find_section_bounds(current_text: str, heading: str) -> tuple[int, int, int] | None:
@@ -120,7 +136,9 @@ def find_section_bounds(current_text: str, heading: str) -> tuple[int, int, int]
     if section_match is None:
         return None
     next_heading_match = HEADING_RE.search(current_text, section_match.end())
-    section_end = next_heading_match.start() if next_heading_match else len(current_text)
+    section_end = (
+        next_heading_match.start() if next_heading_match else len(current_text)
+    )
     return section_match.start(), section_match.end(), section_end
 
 
@@ -131,7 +149,11 @@ def insert_into_section(current_text: str, heading: str, addition: str) -> str:
         new_section = join_blocks(heading, addition)
         if heading_match is None:
             return join_blocks(current_text, new_section)
-        return join_blocks(current_text[: heading_match.start()], new_section, current_text[heading_match.start() :])
+        return join_blocks(
+            current_text[: heading_match.start()],
+            new_section,
+            current_text[heading_match.start() :],
+        )
 
     section_start, heading_end, section_end = bounds
     section_heading = current_text[section_start:heading_end]
@@ -143,7 +165,9 @@ def insert_into_section(current_text: str, heading: str, addition: str) -> str:
     )
 
 
-def build_note_text(current_text: str, addition: str, section_heading: str | None) -> str:
+def build_note_text(
+    current_text: str, addition: str, section_heading: str | None
+) -> str:
     normalized_addition = normalize_block(addition)
     if not normalized_addition:
         return current_text
@@ -169,7 +193,11 @@ def process_audio(
     error_log: Path,
 ) -> None:
     if not ensure_local_file(audio_file):
-        log_error(error_log, f"[{local_now():%Y-%m-%d %H:%M:%S}] Timed out downloading iCloud file: {audio_file}")
+        log_error(
+            error_log,
+            f"[{local_now():%Y-%m-%d %H:%M:%S}] "
+            f"Timed out downloading iCloud file: {audio_file}",
+        )
         return
     recorded_at = extract_recorded_datetime(audio_file)
     date_str = recorded_at.strftime("%Y-%m-%d")
@@ -196,7 +224,11 @@ def process_audio(
                 error_log,
                 f"[{local_now():%Y-%m-%d %H:%M:%S}] Failed to rollback note after processing error for {audio_file}: {rollback_err}",
             )
-        log_error(error_log, f"[{local_now():%Y-%m-%d %H:%M:%S}] Failed to process file {audio_file}: {err}")
+        log_error(
+            error_log,
+            f"[{local_now():%Y-%m-%d %H:%M:%S}] "
+            f"Failed to process file {audio_file}: {err}",
+        )
 
 
 def main() -> None:

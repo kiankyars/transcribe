@@ -41,6 +41,3 @@ if [ -x ".venv/bin/python" ]; then
 fi
 
 "$PYTHON_BIN" src/transcribe.py
-
-# Auto pull and push changes to git
-/bin/zsh /Users/kian/obsidian/scripts/daily_git_sync.sh
