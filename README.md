@@ -22,6 +22,7 @@ Transcribes `.m4a` voice memos into Obsidian notes and can also process routed V
   - reads the original recording directly from the Voice Memos library
   - transcribes with `GEMINI_MODEL` from `~/.env`, with no local or alternate-model fallback, before starting Codex
   - gives the sandbox a temporary audio copy, leaving the original Voice Memo outside the agent's writable roots
+  - preserves only the configured Codex model, reasoning effort, and service tier while excluding user tools and execution rules
   - starts Codex in the Obsidian vault with workspace-only writes, approval escalation disabled, and shell network access disabled
   - gives Codex the temporary recording path, date, route, and transcript, then lets it use the vault context and its judgment to make every appropriate content edit
   - the skill identifies `people/{first-name}.md`, `notes/YYYY-MM-DD.md`, and `audio/` as the stable vault environment without prescribing a rigid output format

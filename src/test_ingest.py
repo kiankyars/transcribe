@@ -11,6 +11,7 @@ from src.import_voice_memos import (
     Config,
     VoiceMemoMetadata,
     build_prompt,
+    codex_preference_args,
     load_routes,
     process_voice_memos,
     run_codex,
@@ -67,6 +68,28 @@ class VoiceMemoPromptTests(unittest.TestCase):
         required_env.assert_called_once_with("GEMINI_API_KEY")
         transcribe_audio_file.assert_called_once_with(client, audio_file)
 
+    def test_codex_preferences_allowlist_only_model_settings(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.toml"
+            config_path.write_text(
+                'model = "gpt-5.6-sol"\n'
+                'model_reasoning_effort = "ultra"\n'
+                'service_tier = "default"\n'
+                '[mcp_servers.github]\ncommand = "unsafe-server"\n'
+            )
+
+            self.assertEqual(
+                codex_preference_args(config_path),
+                [
+                    "--model",
+                    "gpt-5.6-sol",
+                    "-c",
+                    'model_reasoning_effort="ultra"',
+                    "-c",
+                    'service_tier="default"',
+                ],
+            )
+
 
 class VoiceMemoLaunchdTests(unittest.TestCase):
     def test_voice_memos_watcher_has_eight_minute_fallback(self) -> None:
@@ -97,7 +120,16 @@ class CodexInvocationTests(unittest.TestCase):
         run.return_value.returncode = 0
         run.return_value.stderr = ""
 
-        self.assertTrue(run_codex(self.config, "prompt"))
+        with patch(
+            "src.import_voice_memos.codex_preference_args",
+            return_value=[
+                "--model",
+                "gpt-test-model",
+                "-c",
+                'model_reasoning_effort="high"',
+            ],
+        ):
+            self.assertTrue(run_codex(self.config, "prompt"))
 
         command = run.call_args.args[0]
         self.assertEqual(
@@ -106,6 +138,10 @@ class CodexInvocationTests(unittest.TestCase):
                 "/opt/homebrew/bin/codex",
                 "exec",
                 "--ignore-user-config",
+                "--model",
+                "gpt-test-model",
+                "-c",
+                'model_reasoning_effort="high"',
                 "--ignore-rules",
                 "--sandbox",
                 "workspace-write",

@@ -17,6 +17,11 @@ from dotenv import load_dotenv
 from google import genai
 
 try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+try:
     from .runtime_support import (
         ensure_local_file,
         load_state,
@@ -256,12 +261,36 @@ def build_prompt(
     )
 
 
+def codex_preference_args(
+    config_path: Path | None = None,
+) -> list[str]:
+    if tomllib is None:
+        return []
+    config_path = config_path or Path.home() / ".codex" / "config.toml"
+    try:
+        with config_path.open("rb") as config_file:
+            user_config = tomllib.load(config_file)
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+
+    args: list[str] = []
+    model = user_config.get("model")
+    if isinstance(model, str) and model.strip():
+        args.extend(["--model", model.strip()])
+    for key in ("model_reasoning_effort", "service_tier"):
+        value = user_config.get(key)
+        if isinstance(value, str) and value.strip():
+            args.extend(["-c", f"{key}={json.dumps(value.strip())}"])
+    return args
+
+
 def run_codex(config: Config, prompt: str) -> bool:
     result = subprocess.run(
         [
             config.codex_bin,
             "exec",
             "--ignore-user-config",
+            *codex_preference_args(),
             "--ignore-rules",
             "--sandbox",
             "workspace-write",
