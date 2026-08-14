@@ -13,17 +13,19 @@ Transcribes `.m4a` voice memos into Obsidian notes and can also process routed V
   - if the daily note does not exist, it is created
 - `notes` is the catch-all simple inbox for podcasts, books, reading thoughts, and other uncategorized captures.
 - After a simple-ingest `.m4a` is successfully appended into the daily note, the source file is moved to macOS Trash.
-- Simple ingestion does not stage, commit, or push vault changes.
+- Siri ingestion never stages, commits, pulls, fetches, merges, rebases, or pushes
+  a repository. Repository synchronization belongs to separate vault automation.
 - Agentic Voice Memos processing:
   - watches the macOS Voice Memos store and also scans every eight minutes as a fallback for coalesced filesystem events
   - rescans recordings that arrive or finish syncing during an active importer run before exiting
   - processes recordings renamed exactly `monde` or `réflexion`
   - reads the original recording directly from the Voice Memos library
-  - starts Codex in the Obsidian vault and explicitly invokes its `process-voice-memo` skill
-  - gives Codex a reusable `siri-transcribe-audio` command using `GEMINI_MODEL` from `~/.env`, with no local or alternate-model fallback
-  - gives Codex the recording path, date, and route, then lets it use the vault context and its judgment to make every appropriate edit
+  - transcribes with `GEMINI_MODEL` from `~/.env`, with no local or alternate-model fallback, before starting Codex
+  - gives the sandbox a temporary audio copy, leaving the original Voice Memo outside the agent's writable roots
+  - starts Codex in the Obsidian vault with workspace-only writes, approval escalation disabled, and shell network access disabled
+  - gives Codex the temporary recording path, date, route, and transcript, then lets it use the vault context and its judgment to make every appropriate content edit
   - the skill identifies `people/{first-name}.md`, `notes/YYYY-MM-DD.md`, and `audio/` as the stable vault environment without prescribing a rigid output format
-  - after editing, Codex reviews the diff, commits only the changes attributable to that recording, and pushes them without running the vault-wide daily sync script
+  - after editing, Codex re-reads the affected content and leaves all repository synchronization outside the Siri workflow
   - leaves source memos in Voice Memos for manual deletion
 
 The agentic skill lives in the vault at `.agents/skills/process-voice-memo/SKILL.md`. The Siri repository only detects routed recordings and hands each one to the vault agent.

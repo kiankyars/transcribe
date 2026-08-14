@@ -17,6 +17,9 @@ from src.transcribe import (
     main as run_simple_inbox,
 )
 from src.transcribe_audio import (
+    GEMINI_REQUEST_TIMEOUT_MS as AUDIO_REQUEST_TIMEOUT_MS,
+)
+from src.transcribe_audio import (
     audio_mime_type,
     build_prompt,
     transcribe_audio,
@@ -51,7 +54,12 @@ class GeminiAudioTranscriptionTests(unittest.TestCase):
             result = wait_for_active_file(client, processing)
 
         self.assertIs(result, active)
-        client.files.get.assert_called_once_with(name="files/example")
+        get_call = client.files.get.call_args
+        self.assertEqual(get_call.kwargs["name"], "files/example")
+        self.assertEqual(
+            get_call.kwargs["config"].http_options.timeout,
+            AUDIO_REQUEST_TIMEOUT_MS,
+        )
 
     def test_uploads_transcribes_and_deletes_audio(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -78,10 +86,23 @@ class GeminiAudioTranscriptionTests(unittest.TestCase):
         self.assertEqual(transcript, "Speaker 1: Hello")
         upload_config = client.files.upload.call_args.kwargs["config"]
         self.assertEqual(upload_config.mime_type, "audio/mp4")
+        self.assertEqual(
+            upload_config.http_options.timeout,
+            AUDIO_REQUEST_TIMEOUT_MS,
+        )
         call = client.models.generate_content.call_args
         self.assertEqual(call.kwargs["model"], "gemini-test-model")
         self.assertIs(call.kwargs["contents"][0], uploaded)
-        client.files.delete.assert_called_once_with(name="files/example")
+        self.assertEqual(
+            call.kwargs["config"].http_options.timeout,
+            AUDIO_REQUEST_TIMEOUT_MS,
+        )
+        delete_call = client.files.delete.call_args
+        self.assertEqual(delete_call.kwargs["name"], "files/example")
+        self.assertEqual(
+            delete_call.kwargs["config"].http_options.timeout,
+            AUDIO_REQUEST_TIMEOUT_MS,
+        )
 
     def test_transcription_retries_only_the_pinned_helper_path(self) -> None:
         client = Mock()
@@ -106,6 +127,32 @@ class GeminiAudioTranscriptionTests(unittest.TestCase):
 
         self.assertEqual(transcript, "Speaker 1: Hello")
         self.assertEqual(transcribe_once.call_count, 3)
+        self.assertTrue(
+            all(
+                call.kwargs["model_name"] == "gemini-test-model"
+                for call in transcribe_once.call_args_list
+            )
+        )
+
+    def test_transport_timeout_retries_the_same_model(self) -> None:
+        client = Mock()
+        with (
+            patch(
+                "src.transcribe_audio.transcribe_once",
+                side_effect=[TimeoutError("request timed out"), "Speaker 1: Hello"],
+            ) as transcribe_once,
+            patch(
+                "src.transcribe_audio.configured_env",
+                return_value="gemini-test-model",
+            ),
+            patch("src.transcribe_audio.time.sleep"),
+        ):
+            transcript = transcribe_with_retries(
+                client, Path("recording.m4a"), context=None
+            )
+
+        self.assertEqual(transcript, "Speaker 1: Hello")
+        self.assertEqual(transcribe_once.call_count, 2)
         self.assertTrue(
             all(
                 call.kwargs["model_name"] == "gemini-test-model"

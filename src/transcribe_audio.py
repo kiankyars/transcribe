@@ -19,6 +19,7 @@ except ImportError:
     from runtime_support import configured_env
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+GEMINI_REQUEST_TIMEOUT_MS = 120_000
 DEFAULT_PROMPT = """Transcribe all intelligible speech in this recording faithfully.
 Preserve the spoken wording and natural speaker turns. Use generic speaker labels when useful.
 Do not summarize, omit substantive content, or infer anyone's identity unless their name is explicitly spoken.
@@ -64,7 +65,12 @@ def wait_for_active_file(
                 f"Gemini failed to process uploaded file {current_file.name}"
             )
         time.sleep(poll_interval)
-        current_file = client.files.get(name=current_file.name)
+        current_file = client.files.get(
+            name=current_file.name,
+            config=types.GetFileConfig(
+                http_options=types.HttpOptions(timeout=GEMINI_REQUEST_TIMEOUT_MS)
+            ),
+        )
     raise TimeoutError(
         f"Gemini did not finish processing {uploaded_file.name} within {timeout:g}s"
     )
@@ -94,6 +100,7 @@ def transcribe_once(
         config=types.UploadFileConfig(
             display_name=audio_file.name,
             mime_type=mime_type,
+            http_options=types.HttpOptions(timeout=GEMINI_REQUEST_TIMEOUT_MS),
         ),
     )
     try:
@@ -101,6 +108,9 @@ def transcribe_once(
         response = client.models.generate_content(
             model=selected_model,
             contents=[active_file, build_prompt(context)],
+            config=types.GenerateContentConfig(
+                http_options=types.HttpOptions(timeout=GEMINI_REQUEST_TIMEOUT_MS)
+            ),
         )
         transcript = (response.text or "").strip()
         if not transcript:
@@ -109,8 +119,15 @@ def transcribe_once(
     finally:
         if uploaded_file.name:
             try:
-                client.files.delete(name=uploaded_file.name)
-            except errors.APIError as err:
+                client.files.delete(
+                    name=uploaded_file.name,
+                    config=types.DeleteFileConfig(
+                        http_options=types.HttpOptions(
+                            timeout=GEMINI_REQUEST_TIMEOUT_MS
+                        )
+                    ),
+                )
+            except Exception as err:  # noqa: BLE001 - cleanup must not hide a transcript
                 print(
                     f"Warning: could not delete Gemini upload {uploaded_file.name}: {err}",
                     file=sys.stderr,
@@ -142,6 +159,9 @@ def transcribe_with_retries(
             if is_invalid_argument(error) or attempt == max_attempts - 1:
                 raise
         except RuntimeError:
+            if attempt == max_attempts - 1:
+                raise
+        except Exception:
             if attempt == max_attempts - 1:
                 raise
         time.sleep(2**attempt)

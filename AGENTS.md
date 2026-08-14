@@ -14,6 +14,12 @@
 - Runtime logs are written under `logs/` (e.g. `launchd_simple_*.log`, `launchd_voice_memos_*.log`, `siri_errors.log`).
 - Project metadata and dependencies are defined in `pyproject.toml`.
 
+## Runtime Boundary
+- Ingestion may write vault content and its operational logs, state, and temporary
+  files. The simple inbox retains its documented source-to-Trash behavior.
+- Runtime code, wrappers, and invoked-agent prompts must not mutate or synchronize
+  Git repositories. Vault synchronization belongs to separate vault automation.
+
 ## Build, Test, and Development Commands
 - `uv sync`: install/update the virtual environment and dependencies.
 - `./src/siri.sh`: run the transcription flow manually.
