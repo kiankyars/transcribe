@@ -17,6 +17,10 @@
 ## Runtime Boundary
 - Ingestion may write vault content and its operational logs, state, and temporary
   files. The simple inbox retains its documented source-to-Trash behavior.
+- Vault writes must use the shared kernel-held vault operation lock. Simple note
+  replacement must remain atomic and idempotent across Trash or process failure.
+- Routed Voice Memo entry points must share the importer lock so only one process
+  can load, apply, and save routing state at a time.
 - Runtime code, wrappers, and invoked-agent prompts must not mutate or synchronize
   Git repositories. Vault synchronization belongs to separate vault automation.
 

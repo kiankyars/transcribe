@@ -28,6 +28,8 @@ try:
         log_error,
         required_env,
         save_state,
+        vault_operation_lock,
+        voice_memos_import_lock,
     )
     from .transcribe_audio import transcribe_audio as transcribe_audio_file
 except ImportError:
@@ -37,6 +39,8 @@ except ImportError:
         log_error,
         required_env,
         save_state,
+        vault_operation_lock,
+        voice_memos_import_lock,
     )
     from transcribe_audio import transcribe_audio as transcribe_audio_file
 
@@ -228,6 +232,28 @@ def select_changed_voice_memos(
     return changed_paths
 
 
+def checkpoint_state_for_processed_memos(
+    state: dict[str, object],
+    source_paths: list[Path],
+    processed_paths: set[str],
+) -> dict[str, object]:
+    observed_versions = state.get("observed_versions", {})
+    if not isinstance(observed_versions, dict):
+        raise TypeError("Voice Memo state has an invalid observed_versions map")
+    pending_paths = {
+        str(path.resolve())
+        for path in source_paths
+        if str(path.resolve()) not in processed_paths
+    }
+    checkpoint = dict(state)
+    checkpoint["observed_versions"] = {
+        path: version
+        for path, version in observed_versions.items()
+        if path not in pending_paths
+    }
+    return checkpoint
+
+
 def transcribe_recording(audio_file: Path) -> str:
     client = genai.Client(api_key=required_env("GEMINI_API_KEY"))
     try:
@@ -317,7 +343,7 @@ def run_codex(config: Config, prompt: str) -> bool:
     return True
 
 
-def process_voice_memos(config: Config, dry_run: bool) -> int:
+def _process_voice_memos(config: Config, dry_run: bool) -> int:
     routes = load_routes()
     state = load_state(config.state_path)
     records = state.setdefault("records", {})
@@ -415,10 +441,11 @@ def process_voice_memos(config: Config, dry_run: bool) -> int:
                         config.error_log,
                         f"[{local_now():%Y-%m-%d %H:%M:%S}] Trace agent start: {source_path}",
                     )
-                    if not run_codex(config, prompt):
-                        raise RuntimeError(
-                            "Codex failed; the recording remains unprocessed."
-                        )
+                    with vault_operation_lock():
+                        if not run_codex(config, prompt):
+                            raise RuntimeError(
+                                "Codex failed; the recording remains unprocessed."
+                            )
                     log_error(
                         config.error_log,
                         f"[{local_now():%Y-%m-%d %H:%M:%S}] Trace agent finish: {source_path}",
@@ -442,6 +469,16 @@ def process_voice_memos(config: Config, dry_run: bool) -> int:
                 "title": metadata.title,
             }
             processed_paths.add(str(source_path.resolve()))
+            checkpoint = checkpoint_state_for_processed_memos(
+                state,
+                source_paths,
+                processed_paths,
+            )
+            save_state(
+                config.state_path,
+                checkpoint,
+            )
+            state_dirty = checkpoint["observed_versions"] != observed_versions
 
         if not dry_run and state_dirty:
             save_state(config.state_path, state)
@@ -467,6 +504,11 @@ def process_voice_memos(config: Config, dry_run: bool) -> int:
     if not dry_run and state_dirty:
         save_state(config.state_path, state)
     return matches
+
+
+def process_voice_memos(config: Config, dry_run: bool) -> int:
+    with voice_memos_import_lock():
+        return _process_voice_memos(config, dry_run)
 
 
 def parse_args() -> argparse.Namespace:

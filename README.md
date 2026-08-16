@@ -13,9 +13,12 @@ Transcribes `.m4a` voice memos into Obsidian notes and can also process routed V
   - if the daily note does not exist, it is created
 - `notes` is the catch-all simple inbox for podcasts, books, reading thoughts, and other uncategorized captures.
 - After a simple-ingest `.m4a` is successfully appended into the daily note, the source file is moved to macOS Trash.
+- Simple note updates use the vault operation lock and atomic replacement. Each capture includes a hidden source marker, so a Trash failure or process restart retries finalization without duplicating the note or calling Gemini again.
+  - The lock coordinates Siri with the vault synchronizer. External editors do not participate in that advisory lock; the writer rebuilds on changes it detects before replacement, while the synchronizer's settle window provides the broader safety net.
 - Siri ingestion never stages, commits, pulls, fetches, merges, rebases, or pushes
   a repository. Repository synchronization belongs to separate vault automation.
 - Agentic Voice Memos processing:
+  - a process-wide importer lock prevents the watcher, manual runner, and direct entry point from loading and applying the same stale state concurrently; successful records are atomically checkpointed immediately
   - watches the macOS Voice Memos store and also scans every eight minutes as a fallback for coalesced filesystem events
   - rescans recordings that arrive or finish syncing during an active importer run before exiting
   - processes recordings renamed exactly `monde` or `réflexion`
@@ -24,6 +27,7 @@ Transcribes `.m4a` voice memos into Obsidian notes and can also process routed V
   - gives the sandbox a temporary audio copy, leaving the original Voice Memo outside the agent's writable roots
   - preserves only the configured Codex model, reasoning effort, and service tier while excluding user tools and execution rules
   - starts Codex in the Obsidian vault with workspace-only writes, approval escalation disabled, and shell network access disabled
+  - holds the same vault operation lock used by the independent vault synchronizer while Codex edits vault content
   - gives Codex the temporary recording path, date, route, and transcript, then lets it use the vault context and its judgment to make every appropriate content edit
   - the skill identifies `people/{first-name}.md`, `notes/YYYY-MM-DD.md`, and `audio/` as the stable vault environment without prescribing a rigid output format
   - after editing, Codex re-reads the affected content and leaves all repository synchronization outside the Siri workflow

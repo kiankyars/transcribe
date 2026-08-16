@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import copy
 import plistlib
+import subprocess
 import unittest
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,6 +14,7 @@ from src.import_voice_memos import (
     Config,
     VoiceMemoMetadata,
     build_prompt,
+    checkpoint_state_for_processed_memos,
     codex_preference_args,
     load_routes,
     process_voice_memos,
@@ -18,11 +22,51 @@ from src.import_voice_memos import (
     select_changed_voice_memos,
     transcribe_recording,
 )
+from src.runtime_support import (
+    save_state,
+    vault_operation_lock,
+    voice_memos_import_lock,
+)
 
 
 class VoiceMemoPromptTests(unittest.TestCase):
     def test_routes_are_accent_insensitive(self) -> None:
         self.assertEqual(load_routes(), {"monde": "monde", "reflexion": "réflexion"})
+
+    def test_checkpoint_does_not_mark_pending_memo_as_observed(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            first = Path(temp_dir) / "first.m4a"
+            second = Path(temp_dir) / "second.m4a"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            observed_versions: dict[str, str] = {}
+            self.assertEqual(
+                select_changed_voice_memos([first, second], observed_versions),
+                [first, second],
+            )
+            first_path = str(first.resolve())
+            second_path = str(second.resolve())
+            state: dict[str, object] = {
+                "schema_version": 2,
+                "records": {"first-id": {"processed_at": "now"}},
+                "observed_versions": observed_versions,
+            }
+
+            checkpoint = checkpoint_state_for_processed_memos(
+                state,
+                [first, second],
+                {first_path},
+            )
+            persisted_versions = checkpoint["observed_versions"]
+            self.assertIsInstance(persisted_versions, dict)
+            self.assertIn(first_path, persisted_versions)
+            self.assertNotIn(second_path, persisted_versions)
+            restart_queue = select_changed_voice_memos(
+                [first, second],
+                persisted_versions,
+            )
+
+        self.assertEqual(restart_queue, [second])
 
     def test_prompt_contains_recording_context_and_forbids_git(self) -> None:
         prompt = build_prompt(
@@ -91,6 +135,61 @@ class VoiceMemoPromptTests(unittest.TestCase):
             )
 
 
+class VaultOperationLockTests(unittest.TestCase):
+    def test_python_lock_excludes_vault_sync_lockf_process(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            lock_path = Path(temp_dir) / "vault-operation.lock"
+            command = [
+                "/usr/bin/lockf",
+                "-s",
+                "-t",
+                "0",
+                "-k",
+                str(lock_path),
+                "/usr/bin/true",
+            ]
+            with patch(
+                "src.runtime_support.VAULT_OPERATION_LOCK_PATH",
+                lock_path,
+            ):
+                with vault_operation_lock():
+                    locked = subprocess.run(command, check=False)
+                released = subprocess.run(command, check=False)
+
+        self.assertEqual(locked.returncode, 75)
+        self.assertEqual(released.returncode, 0)
+
+    def test_second_voice_memo_import_is_rejected_while_active(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            lock_path = Path(temp_dir) / "voice-memos-import.lock"
+            with (
+                patch(
+                    "src.runtime_support.VOICE_MEMOS_IMPORT_LOCK_PATH",
+                    lock_path,
+                ),
+                voice_memos_import_lock(),
+                self.assertRaises(TimeoutError),
+                voice_memos_import_lock(),
+            ):
+                self.fail("overlapping importer acquired the lock")
+
+    def test_state_replacement_preserves_permissions(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "state.json"
+            state_path.write_text('{"old": true}\n')
+            state_path.chmod(0o600)
+
+            save_state(state_path, {"schema_version": 2, "records": {}})
+
+            content = state_path.read_text()
+            mode = state_path.stat().st_mode & 0o777
+            temp_files = list(state_path.parent.glob(f".{state_path.name}.*.tmp"))
+
+        self.assertIn('"schema_version": 2', content)
+        self.assertEqual(mode, 0o600)
+        self.assertEqual(temp_files, [])
+
+
 class VoiceMemoLaunchdTests(unittest.TestCase):
     def test_voice_memos_watcher_has_eight_minute_fallback(self) -> None:
         template_path = (
@@ -106,6 +205,18 @@ class VoiceMemoLaunchdTests(unittest.TestCase):
 
 class CodexInvocationTests(unittest.TestCase):
     def setUp(self) -> None:
+        vault_lock = patch(
+            "src.import_voice_memos.vault_operation_lock",
+            side_effect=nullcontext,
+        )
+        vault_lock.start()
+        self.addCleanup(vault_lock.stop)
+        importer_lock = patch(
+            "src.import_voice_memos.voice_memos_import_lock",
+            side_effect=nullcontext,
+        )
+        importer_lock.start()
+        self.addCleanup(importer_lock.stop)
         self.config = Config(
             codex_bin="/opt/homebrew/bin/codex",
             ffprobe_bin="/opt/homebrew/bin/ffprobe",
@@ -321,6 +432,71 @@ class CodexInvocationTests(unittest.TestCase):
         save_state.assert_called_once()
         saved_state = save_state.call_args.args[1]
         self.assertNotIn(first_key, saved_state["observed_versions"])
+
+    def test_later_failed_memo_remains_retryable_after_earlier_checkpoint(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temp_dir:
+            first = Path(temp_dir) / "first.m4a"
+            second = Path(temp_dir) / "second.m4a"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            metadata = {
+                first: VoiceMemoMetadata(
+                    title="monde",
+                    recorded_at=datetime(2026, 8, 16, 10, tzinfo=timezone.utc),
+                    voice_memo_uuid="first-id",
+                ),
+                second: VoiceMemoMetadata(
+                    title="réflexion",
+                    recorded_at=datetime(2026, 8, 16, 11, tzinfo=timezone.utc),
+                    voice_memo_uuid="second-id",
+                ),
+            }
+            saved_states: list[dict[str, object]] = []
+
+            with (
+                patch(
+                    "src.import_voice_memos.discover_voice_memos",
+                    return_value=[first, second],
+                ),
+                patch("src.import_voice_memos.ensure_local_file", return_value=True),
+                patch("src.import_voice_memos.wait_for_stable_file", return_value=True),
+                patch(
+                    "src.import_voice_memos.probe_voice_memo",
+                    side_effect=lambda source, _ffprobe: metadata[source],
+                ),
+                patch(
+                    "src.import_voice_memos.load_state",
+                    return_value={"records": {}},
+                ),
+                patch(
+                    "src.import_voice_memos.save_state",
+                    side_effect=lambda _path, state: saved_states.append(
+                        copy.deepcopy(state)
+                    ),
+                ),
+                patch(
+                    "src.import_voice_memos.transcribe_recording",
+                    side_effect=["First transcript", RuntimeError("timed out")],
+                ),
+                patch("src.import_voice_memos.run_codex", return_value=True),
+                patch("src.import_voice_memos.log_error"),
+                patch("src.import_voice_memos.time.sleep"),
+            ):
+                self.assertEqual(process_voice_memos(self.config, dry_run=False), 2)
+
+            persisted_state = saved_states[-1]
+            persisted_versions = persisted_state["observed_versions"]
+            self.assertIsInstance(persisted_versions, dict)
+            restart_queue = select_changed_voice_memos(
+                [first, second],
+                persisted_versions,
+            )
+
+        self.assertIn("first-id", persisted_state["records"])
+        self.assertNotIn("second-id", persisted_state["records"])
+        self.assertEqual(restart_queue, [second])
 
     def test_durable_version_index_skips_unchanged_recordings(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import stat
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -11,7 +13,12 @@ from google.genai import errors, types
 from src.simple_endpoints import SimpleEndpoint
 from src.transcribe import (
     GEMINI_REQUEST_TIMEOUT_MS,
+    atomic_write_if_unchanged,
+    audio_capture_marker,
     format_transcript_as_bullets,
+    process_audio,
+    read_note_snapshot,
+    write_capture_to_note,
 )
 from src.transcribe import (
     main as run_simple_inbox,
@@ -332,6 +339,10 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
                 ),
                 patch("src.transcribe.ensure_local_file", return_value=True),
                 patch("src.transcribe.time.sleep"),
+                patch(
+                    "src.transcribe.vault_operation_lock",
+                    side_effect=nullcontext,
+                ),
                 patch("src.transcribe.trash_file") as trash_file,
             ):
                 run_simple_inbox()
@@ -342,6 +353,161 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
         trash_file.assert_called_once_with(second)
         self.assertIn("## Course\n\n- Second recording", note)
         self.assertNotIn("first", note.lower())
+
+    def test_note_write_rebuilds_after_a_concurrent_edit(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            note = Path(temp_dir) / "note.md"
+            note.write_text("Original\n", encoding="utf-8")
+            real_atomic_write = atomic_write_if_unchanged
+            attempts = 0
+
+            def race_once(target_file, expected, text):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    target_file.write_text(
+                        "Original\n\nManual edit\n",
+                        encoding="utf-8",
+                    )
+                    return False
+                return real_atomic_write(target_file, expected, text)
+
+            with patch(
+                "src.transcribe.atomic_write_if_unchanged",
+                side_effect=race_once,
+            ):
+                write_capture_to_note(
+                    note,
+                    "- Captured idea",
+                    None,
+                    "<!-- siri-ingest:test -->",
+                )
+
+            content = note.read_text(encoding="utf-8")
+
+        self.assertEqual(attempts, 2)
+        self.assertIn("Manual edit", content)
+        self.assertEqual(content.count("- Captured idea"), 1)
+        self.assertEqual(content.count("<!-- siri-ingest:test -->"), 1)
+
+    def test_atomic_note_replacement_preserves_permissions(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            note = Path(temp_dir) / "note.md"
+            note.write_text("Original\n", encoding="utf-8")
+            note.chmod(0o600)
+
+            replaced = atomic_write_if_unchanged(
+                note,
+                b"Original\n",
+                "Updated\n",
+            )
+
+            mode = stat.S_IMODE(note.stat().st_mode)
+            content = note.read_text(encoding="utf-8")
+
+        self.assertTrue(replaced)
+        self.assertEqual(mode, 0o600)
+        self.assertEqual(content, "Updated\n")
+
+    def test_trash_failure_retries_without_duplicate_or_second_model_call(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            source_dir = temp_path / "course"
+            source_dir.mkdir()
+            audio_file = source_dir / "2026-08-16 10.00.00.m4a"
+            audio_file.write_bytes(b"audio")
+            daily_dir = temp_path / "notes"
+            daily_dir.mkdir()
+            note = daily_dir / "2026-08-16.md"
+            note.write_text("Existing note\n", encoding="utf-8")
+            error_log = temp_path / "errors.log"
+            source = SimpleEndpoint("course", "## Course", source_dir)
+            client = Mock()
+            client.models.generate_content.return_value = SimpleNamespace(
+                text="- Captured idea"
+            )
+            marker = audio_capture_marker(audio_file)
+
+            with (
+                patch("src.transcribe.ensure_local_file", return_value=True),
+                patch(
+                    "src.transcribe.configured_env",
+                    return_value="gemini-test-model",
+                ),
+                patch(
+                    "src.transcribe.vault_operation_lock",
+                    side_effect=nullcontext,
+                ),
+                patch(
+                    "src.transcribe.trash_file",
+                    side_effect=[OSError("trash unavailable"), None],
+                ) as trash_file,
+                patch("src.transcribe.log_error") as log_error,
+            ):
+                process_audio(client, audio_file, source, daily_dir, error_log)
+                process_audio(client, audio_file, source, daily_dir, error_log)
+
+            content = note.read_text(encoding="utf-8")
+
+        self.assertEqual(client.models.generate_content.call_count, 1)
+        self.assertEqual(trash_file.call_count, 2)
+        self.assertEqual(content.count("- Captured idea"), 1)
+        self.assertEqual(content.count(marker), 1)
+        self.assertIn("trash unavailable", log_error.call_args_list[0].args[1])
+
+    def test_unreadable_note_does_not_block_later_queue_item(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            source_dir = temp_path / "course"
+            source_dir.mkdir()
+            first = source_dir / "2026-08-15 10.00.00.m4a"
+            second = source_dir / "2026-08-16 10.00.00.m4a"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            daily_dir = temp_path / "notes"
+            error_log = temp_path / "errors.log"
+            client = Mock()
+            client.models.generate_content.return_value = SimpleNamespace(
+                text="- Second capture"
+            )
+            source = SimpleEndpoint("course", "## Course", source_dir)
+
+            def fail_one_note(target_file):
+                if target_file.name == "2026-08-15.md":
+                    raise OSError("note unavailable")
+                return read_note_snapshot(target_file)
+
+            with (
+                patch(
+                    "src.transcribe.load_config",
+                    return_value=(client, [source], daily_dir, error_log),
+                ),
+                patch(
+                    "src.transcribe.configured_env",
+                    return_value="gemini-test-model",
+                ),
+                patch("src.transcribe.ensure_local_file", return_value=True),
+                patch(
+                    "src.transcribe.read_note_snapshot",
+                    side_effect=fail_one_note,
+                ),
+                patch(
+                    "src.transcribe.vault_operation_lock",
+                    side_effect=nullcontext,
+                ),
+                patch("src.transcribe.trash_file") as trash_file,
+                patch("src.transcribe.log_error") as log_error,
+            ):
+                run_simple_inbox()
+
+            second_note = (daily_dir / "2026-08-16.md").read_text(encoding="utf-8")
+            first_note_exists = (daily_dir / "2026-08-15.md").exists()
+
+        self.assertFalse(first_note_exists)
+        self.assertIn("- Second capture", second_note)
+        trash_file.assert_called_once_with(second)
+        self.assertEqual(client.models.generate_content.call_count, 1)
+        self.assertIn("note unavailable", log_error.call_args_list[0].args[1])
 
 
 class SimpleIngestWrapperTests(unittest.TestCase):

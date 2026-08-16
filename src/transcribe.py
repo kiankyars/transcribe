@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+import stat
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +20,7 @@ try:
         ensure_local_file,
         log_error,
         required_env,
+        vault_operation_lock,
     )
     from .simple_endpoints import SimpleEndpoint as SourceConfig
     from .simple_endpoints import load_simple_endpoints
@@ -25,6 +30,7 @@ except ImportError:
         ensure_local_file,
         log_error,
         required_env,
+        vault_operation_lock,
     )
     from simple_endpoints import SimpleEndpoint as SourceConfig
     from simple_endpoints import load_simple_endpoints
@@ -34,6 +40,7 @@ load_dotenv()
 DEFAULT_ERROR_LOG = Path(__file__).resolve().parent.parent / "logs" / "siri_errors.log"
 GEMINI_REQUEST_TIMEOUT_MS = 120_000
 HEADING_RE = re.compile(r"(?m)^## .*$")
+NOTE_WRITE_MAX_RETRIES = 5
 
 
 def load_config() -> tuple[genai.Client, list[SourceConfig], Path, Path]:
@@ -176,9 +183,107 @@ def build_note_text(
     return insert_into_section(current_text, section_heading, normalized_addition)
 
 
-def write_note(target_file: Path, text: str) -> None:
+def audio_capture_marker(audio_file: Path) -> str:
+    digest = hashlib.sha256()
+    digest.update(audio_file.name.encode("utf-8"))
+    digest.update(b"\0")
+    with audio_file.open("rb") as audio:
+        while chunk := audio.read(1024 * 1024):
+            digest.update(chunk)
+    return f"<!-- siri-ingest:{digest.hexdigest()} -->"
+
+
+def read_note_snapshot(target_file: Path) -> bytes | None:
+    try:
+        return target_file.read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def fsync_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def atomic_write_if_unchanged(
+    target_file: Path,
+    expected: bytes | None,
+    text: str,
+) -> bool:
     target_file.parent.mkdir(parents=True, exist_ok=True)
-    target_file.write_text(text)
+    if target_file.is_symlink():
+        raise RuntimeError(f"Refusing to replace symlinked note: {target_file}")
+
+    mode = 0o644
+    if expected is not None:
+        try:
+            mode = stat.S_IMODE(target_file.stat().st_mode)
+        except FileNotFoundError:
+            return False
+
+    file_descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{target_file.name}.siri-",
+        suffix=".tmp",
+        dir=target_file.parent,
+    )
+    temp_file = Path(temp_name)
+    try:
+        os.fchmod(file_descriptor, mode)
+        with os.fdopen(file_descriptor, "wb") as output:
+            file_descriptor = -1
+            output.write(text.encode("utf-8"))
+            output.flush()
+            os.fsync(output.fileno())
+
+        if read_note_snapshot(target_file) != expected:
+            return False
+        if target_file.is_symlink():
+            raise RuntimeError(f"Refusing to replace symlinked note: {target_file}")
+        if expected is None:
+            try:
+                os.link(temp_file, target_file)
+            except FileExistsError:
+                return False
+            temp_file.unlink()
+        else:
+            os.replace(temp_file, target_file)
+        fsync_directory(target_file.parent)
+        return True
+    finally:
+        if file_descriptor >= 0:
+            os.close(file_descriptor)
+        temp_file.unlink(missing_ok=True)
+
+
+def write_capture_to_note(
+    target_file: Path,
+    bullets: str,
+    section_heading: str | None,
+    marker: str,
+) -> None:
+    for _attempt in range(NOTE_WRITE_MAX_RETRIES):
+        snapshot = read_note_snapshot(target_file)
+        current_text = snapshot.decode("utf-8") if snapshot is not None else ""
+        if marker in current_text:
+            return
+        updated_text = build_note_text(
+            current_text,
+            join_blocks(bullets, marker),
+            section_heading,
+        )
+        if updated_text == current_text:
+            raise RuntimeError("Transcription did not produce note content")
+        if atomic_write_if_unchanged(target_file, snapshot, updated_text):
+            committed_text = target_file.read_text(encoding="utf-8")
+            if marker not in committed_text:
+                raise RuntimeError(
+                    f"Note changed before ingestion could be verified: {target_file}"
+                )
+            return
+    raise RuntimeError(f"Note stayed busy during ingestion: {target_file}")
 
 
 def trash_file(file_path: Path) -> None:
@@ -199,31 +304,62 @@ def process_audio(
             f"Timed out downloading iCloud file: {audio_file}",
         )
         return
-    recorded_at = extract_recorded_datetime(audio_file)
+    try:
+        recorded_at = extract_recorded_datetime(audio_file)
+        marker = audio_capture_marker(audio_file)
+    except (OSError, ValueError) as err:
+        log_error(
+            error_log,
+            f"[{local_now():%Y-%m-%d %H:%M:%S}] "
+            f"Failed to inspect source file {audio_file}: {err}",
+        )
+        return
     date_str = recorded_at.strftime("%Y-%m-%d")
     target_file = daily_dir / f"{date_str}.md"
-    bullets = format_transcript_as_bullets(client, audio_file, error_log)
-    if bullets is None:
-        return
-    original_exists = target_file.exists()
-    original_text = target_file.read_text() if original_exists else ""
-    updated_text = build_note_text(original_text, bullets, source.section_heading)
-    if updated_text == original_text:
-        return
     try:
-        write_note(target_file, updated_text)
-        trash_file(audio_file)
-    except Exception as err:  # noqa: BLE001 - restore the note on any write/trash failure
+        current_snapshot = read_note_snapshot(target_file)
+    except OSError as err:
+        log_error(
+            error_log,
+            f"[{local_now():%Y-%m-%d %H:%M:%S}] "
+            f"Failed to read target note for {audio_file}: {err}",
+        )
+        return
+    if current_snapshot is not None and marker.encode("utf-8") in current_snapshot:
         try:
-            if original_exists:
-                write_note(target_file, original_text)
-            elif target_file.exists():
-                target_file.unlink()
-        except Exception as rollback_err:  # noqa: BLE001 - log failed best-effort rollback
+            with vault_operation_lock():
+                if marker in target_file.read_text(encoding="utf-8"):
+                    trash_file(audio_file)
+                    return
+        except Exception as err:  # noqa: BLE001 - retain the source for retry
             log_error(
                 error_log,
-                f"[{local_now():%Y-%m-%d %H:%M:%S}] Failed to rollback note after processing error for {audio_file}: {rollback_err}",
+                f"[{local_now():%Y-%m-%d %H:%M:%S}] "
+                f"Failed to finalize previously written file {audio_file}: {err}",
             )
+            return
+
+    try:
+        bullets = format_transcript_as_bullets(client, audio_file, error_log)
+    except (OSError, ValueError) as err:
+        log_error(
+            error_log,
+            f"[{local_now():%Y-%m-%d %H:%M:%S}] "
+            f"Failed to read source file {audio_file}: {err}",
+        )
+        return
+    if bullets is None or not normalize_block(bullets):
+        return
+    try:
+        with vault_operation_lock():
+            write_capture_to_note(
+                target_file,
+                bullets,
+                source.section_heading,
+                marker,
+            )
+            trash_file(audio_file)
+    except Exception as err:  # noqa: BLE001 - retain source and committed marker for retry
         log_error(
             error_log,
             f"[{local_now():%Y-%m-%d %H:%M:%S}] "
