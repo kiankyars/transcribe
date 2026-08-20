@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import stat
@@ -183,16 +182,6 @@ def build_note_text(
     return insert_into_section(current_text, section_heading, normalized_addition)
 
 
-def audio_capture_marker(audio_file: Path) -> str:
-    digest = hashlib.sha256()
-    digest.update(audio_file.name.encode("utf-8"))
-    digest.update(b"\0")
-    with audio_file.open("rb") as audio:
-        while chunk := audio.read(1024 * 1024):
-            digest.update(chunk)
-    return f"<!-- siri-ingest:{digest.hexdigest()} -->"
-
-
 def read_note_snapshot(target_file: Path) -> bytes | None:
     try:
         return target_file.read_bytes()
@@ -262,26 +251,18 @@ def write_capture_to_note(
     target_file: Path,
     bullets: str,
     section_heading: str | None,
-    marker: str,
 ) -> None:
     for _attempt in range(NOTE_WRITE_MAX_RETRIES):
         snapshot = read_note_snapshot(target_file)
         current_text = snapshot.decode("utf-8") if snapshot is not None else ""
-        if marker in current_text:
-            return
         updated_text = build_note_text(
             current_text,
-            join_blocks(bullets, marker),
+            bullets,
             section_heading,
         )
         if updated_text == current_text:
             raise RuntimeError("Transcription did not produce note content")
         if atomic_write_if_unchanged(target_file, snapshot, updated_text):
-            committed_text = target_file.read_text(encoding="utf-8")
-            if marker not in committed_text:
-                raise RuntimeError(
-                    f"Note changed before ingestion could be verified: {target_file}"
-                )
             return
     raise RuntimeError(f"Note stayed busy during ingestion: {target_file}")
 
@@ -306,7 +287,6 @@ def process_audio(
         return
     try:
         recorded_at = extract_recorded_datetime(audio_file)
-        marker = audio_capture_marker(audio_file)
     except (OSError, ValueError) as err:
         log_error(
             error_log,
@@ -317,7 +297,7 @@ def process_audio(
     date_str = recorded_at.strftime("%Y-%m-%d")
     target_file = daily_dir / f"{date_str}.md"
     try:
-        current_snapshot = read_note_snapshot(target_file)
+        read_note_snapshot(target_file)
     except OSError as err:
         log_error(
             error_log,
@@ -325,20 +305,6 @@ def process_audio(
             f"Failed to read target note for {audio_file}: {err}",
         )
         return
-    if current_snapshot is not None and marker.encode("utf-8") in current_snapshot:
-        try:
-            with vault_operation_lock():
-                if marker in target_file.read_text(encoding="utf-8"):
-                    trash_file(audio_file)
-                    return
-        except Exception as err:  # noqa: BLE001 - retain the source for retry
-            log_error(
-                error_log,
-                f"[{local_now():%Y-%m-%d %H:%M:%S}] "
-                f"Failed to finalize previously written file {audio_file}: {err}",
-            )
-            return
-
     try:
         bullets = format_transcript_as_bullets(client, audio_file, error_log)
     except (OSError, ValueError) as err:
@@ -356,10 +322,9 @@ def process_audio(
                 target_file,
                 bullets,
                 source.section_heading,
-                marker,
             )
             trash_file(audio_file)
-    except Exception as err:  # noqa: BLE001 - retain source and committed marker for retry
+    except Exception as err:  # noqa: BLE001 - retain the source for retry
         log_error(
             error_log,
             f"[{local_now():%Y-%m-%d %H:%M:%S}] "

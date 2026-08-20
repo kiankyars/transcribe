@@ -14,7 +14,6 @@ from src.simple_endpoints import SimpleEndpoint
 from src.transcribe import (
     GEMINI_REQUEST_TIMEOUT_MS,
     atomic_write_if_unchanged,
-    audio_capture_marker,
     format_transcript_as_bullets,
     process_audio,
     read_note_snapshot,
@@ -380,7 +379,6 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
                     note,
                     "- Captured idea",
                     None,
-                    "<!-- siri-ingest:test -->",
                 )
 
             content = note.read_text(encoding="utf-8")
@@ -388,7 +386,7 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
         self.assertEqual(attempts, 2)
         self.assertIn("Manual edit", content)
         self.assertEqual(content.count("- Captured idea"), 1)
-        self.assertEqual(content.count("<!-- siri-ingest:test -->"), 1)
+        self.assertNotIn("siri-ingest", content)
 
     def test_atomic_note_replacement_preserves_permissions(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -409,7 +407,7 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
         self.assertEqual(mode, 0o600)
         self.assertEqual(content, "Updated\n")
 
-    def test_trash_failure_retries_without_duplicate_or_second_model_call(self) -> None:
+    def test_trash_failure_reprocesses_without_recovery_marker(self) -> None:
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             source_dir = temp_path / "course"
@@ -426,8 +424,6 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
             client.models.generate_content.return_value = SimpleNamespace(
                 text="- Captured idea"
             )
-            marker = audio_capture_marker(audio_file)
-
             with (
                 patch("src.transcribe.ensure_local_file", return_value=True),
                 patch(
@@ -449,10 +445,10 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
 
             content = note.read_text(encoding="utf-8")
 
-        self.assertEqual(client.models.generate_content.call_count, 1)
+        self.assertEqual(client.models.generate_content.call_count, 2)
         self.assertEqual(trash_file.call_count, 2)
-        self.assertEqual(content.count("- Captured idea"), 1)
-        self.assertEqual(content.count(marker), 1)
+        self.assertEqual(content.count("- Captured idea"), 2)
+        self.assertNotIn("siri-ingest", content)
         self.assertIn("trash unavailable", log_error.call_args_list[0].args[1])
 
     def test_unreadable_note_does_not_block_later_queue_item(self) -> None:

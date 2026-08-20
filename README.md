@@ -13,7 +13,7 @@ Transcribes `.m4a` voice memos into Obsidian notes and can also process routed V
   - if the daily note does not exist, it is created
 - `notes` is the catch-all simple inbox for podcasts, books, reading thoughts, and other uncategorized captures.
 - After a simple-ingest `.m4a` is successfully appended into the daily note, the source file is moved to macOS Trash.
-- Simple note updates use the vault operation lock and atomic replacement. Each capture includes a hidden source marker, so a Trash failure or process restart retries finalization without duplicating the note or calling Gemini again.
+- Simple note updates use the vault operation lock and atomic replacement. They do not add internal IDs, hashes, or recovery markers to the Markdown. If moving a source file to Trash fails after the note is written, a later retry may transcribe and append that capture again.
   - The lock coordinates Siri with the vault synchronizer. External editors do not participate in that advisory lock; the writer rebuilds on changes it detects before replacement, while the synchronizer's settle window provides the broader safety net.
 - Siri ingestion never stages, commits, pulls, fetches, merges, rebases, or pushes
   a repository. Repository synchronization belongs to separate vault automation.

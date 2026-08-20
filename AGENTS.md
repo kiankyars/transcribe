@@ -18,7 +18,8 @@
 - Ingestion may write vault content and its operational logs, state, and temporary
   files. The simple inbox retains its documented source-to-Trash behavior.
 - Vault writes must use the shared kernel-held vault operation lock. Simple note
-  replacement must remain atomic and idempotent across Trash or process failure.
+  replacement must remain atomic under concurrent edits. Do not add ingestion IDs,
+  hashes, or recovery markers to vault notes.
 - Routed Voice Memo entry points must share the importer lock so only one process
   can load, apply, and save routing state at a time.
 - Runtime code, wrappers, and invoked-agent prompts must not mutate or synchronize
@@ -52,7 +53,8 @@
   2. `uvx ruff check src/import_voice_memos.py src/test_ingest.py`
   3. `uv run python -m py_compile src/transcribe.py src/transcribe_audio.py src/import_voice_memos.py`
   4. Manual smoke run with a sample `.m4a` in a configured voice memo directory.
-- Verify expected output file append behavior and confirm no duplicate processing in the relevant `logs/launchd_*_stderr.log`.
+- Verify expected output file append behavior. Confirm source-to-Trash failures are
+  logged and retain the source for a full retry.
 
 ## Commit & Pull Request Guidelines
 - Follow concise, imperative commit messages (current history style):
