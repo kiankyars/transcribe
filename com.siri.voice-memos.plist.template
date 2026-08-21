@@ -12,8 +12,6 @@
     <array>
         <string>__WATCH_VOICE_MEMOS__</string>
     </array>
-    <key>StartInterval</key>
-    <integer>480</integer>
     <key>WorkingDirectory</key>
     <string>__WORK_DIR__</string>
     <key>StandardOutPath</key>

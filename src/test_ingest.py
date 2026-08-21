@@ -191,7 +191,7 @@ class VaultOperationLockTests(unittest.TestCase):
 
 
 class VoiceMemoLaunchdTests(unittest.TestCase):
-    def test_voice_memos_watcher_has_eight_minute_fallback(self) -> None:
+    def test_voice_memos_watcher_is_event_only(self) -> None:
         template_path = (
             Path(__file__).resolve().parent.parent
             / "com.siri.voice-memos.plist.template"
@@ -200,7 +200,8 @@ class VoiceMemoLaunchdTests(unittest.TestCase):
         with template_path.open("rb") as template_file:
             launchd_config = plistlib.load(template_file)
 
-        self.assertEqual(launchd_config["StartInterval"], 480)
+        self.assertNotIn("StartInterval", launchd_config)
+        self.assertIn("WatchPaths", launchd_config)
 
 
 class CodexInvocationTests(unittest.TestCase):

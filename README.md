@@ -19,7 +19,7 @@ Transcribes `.m4a` voice memos into Obsidian notes and can also process routed V
   a repository. Repository synchronization belongs to separate vault automation.
 - Agentic Voice Memos processing:
   - a process-wide importer lock prevents the watcher, manual runner, and direct entry point from loading and applying the same stale state concurrently; successful records are atomically checkpointed immediately
-  - watches the macOS Voice Memos store and also scans every eight minutes as a fallback for coalesced filesystem events
+  - watches the macOS Voice Memos store
   - rescans recordings that arrive or finish syncing during an active importer run before exiting
   - processes recordings renamed exactly `monde` or `réflexion`
   - reads the original recording directly from the Voice Memos library
