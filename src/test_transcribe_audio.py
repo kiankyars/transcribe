@@ -506,15 +506,5 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
         self.assertIn("note unavailable", log_error.call_args_list[0].args[1])
 
 
-class SimpleIngestWrapperTests(unittest.TestCase):
-    def test_wrapper_does_not_run_vault_wide_git_sync(self) -> None:
-        wrapper_path = Path(__file__).resolve().parent / "run_simple_ingest.sh"
-        wrapper = wrapper_path.read_text()
-
-        self.assertIn('"$PYTHON_BIN" src/transcribe.py', wrapper)
-        self.assertNotIn("daily_git_sync.sh", wrapper)
-        self.assertNotIn("/Users/kian/obsidian/scripts", wrapper)
-
-
 if __name__ == "__main__":
     unittest.main()

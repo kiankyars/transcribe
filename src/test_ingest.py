@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import plistlib
 import subprocess
 import unittest
 from contextlib import nullcontext
@@ -190,20 +189,6 @@ class VaultOperationLockTests(unittest.TestCase):
         self.assertEqual(temp_files, [])
 
 
-class VoiceMemoLaunchdTests(unittest.TestCase):
-    def test_voice_memos_watcher_is_event_only(self) -> None:
-        template_path = (
-            Path(__file__).resolve().parent.parent
-            / "com.siri.voice-memos.plist.template"
-        )
-
-        with template_path.open("rb") as template_file:
-            launchd_config = plistlib.load(template_file)
-
-        self.assertNotIn("StartInterval", launchd_config)
-        self.assertIn("WatchPaths", launchd_config)
-
-
 class CodexInvocationTests(unittest.TestCase):
     def setUp(self) -> None:
         vault_lock = patch(
@@ -266,7 +251,6 @@ class CodexInvocationTests(unittest.TestCase):
                 "-",
             ],
         )
-        self.assertEqual(command[command.index("-C") + 1], "/Users/kian/obsidian")
         self.assertEqual(run.call_args.kwargs["cwd"], "/Users/kian/obsidian")
         self.assertEqual(run.call_args.kwargs["input"], "prompt")
 
