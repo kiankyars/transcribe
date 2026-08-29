@@ -13,6 +13,11 @@ from google import genai
 from google.genai import errors, types
 from send2trash import send2trash
 
+
+class QuotaExhausted(RuntimeError):
+    """Gemini rejected the request because the daily quota is gone."""
+
+
 try:
     from .runtime_support import (
         configured_env,
@@ -66,6 +71,12 @@ def local_now() -> datetime:
     return datetime.now().astimezone()
 
 
+def is_quota_exhausted(err: BaseException) -> bool:
+    if not isinstance(err, errors.APIError):
+        return False
+    return err.code == 429 or "RESOURCE_EXHAUSTED" in str(err)
+
+
 def format_transcript_as_bullets(
     client: genai.Client,
     audio_file: Path,
@@ -95,6 +106,15 @@ def format_transcript_as_bullets(
         except Exception as err:  # noqa: BLE001 - retry transient SDK failures
             attempt_error = f"attempt {attempt + 1}: {err}"
             attempt_errors.append(attempt_error)
+            if is_quota_exhausted(err):
+                timestamp = local_now().strftime("%Y-%m-%d %H:%M:%S")
+                log_error(
+                    error_log,
+                    f"[{timestamp}] Quota exhausted for {model_name}: "
+                    f"{audio_file}. Remaining inbox files were left unprocessed. "
+                    f"Errors: {attempt_error}",
+                )
+                raise QuotaExhausted(str(err)) from err
             if not isinstance(err, errors.APIError):
                 log_error(
                     error_log,
@@ -277,14 +297,14 @@ def process_audio(
     source: SourceConfig,
     daily_dir: Path,
     error_log: Path,
-) -> None:
+) -> bool:
     if not ensure_local_file(audio_file):
         log_error(
             error_log,
             f"[{local_now():%Y-%m-%d %H:%M:%S}] "
             f"Timed out downloading iCloud file: {audio_file}",
         )
-        return
+        return False
     try:
         recorded_at = extract_recorded_datetime(audio_file)
     except (OSError, ValueError) as err:
@@ -293,7 +313,7 @@ def process_audio(
             f"[{local_now():%Y-%m-%d %H:%M:%S}] "
             f"Failed to inspect source file {audio_file}: {err}",
         )
-        return
+        return False
     date_str = recorded_at.strftime("%Y-%m-%d")
     target_file = daily_dir / f"{date_str}.md"
     try:
@@ -304,18 +324,20 @@ def process_audio(
             f"[{local_now():%Y-%m-%d %H:%M:%S}] "
             f"Failed to read target note for {audio_file}: {err}",
         )
-        return
+        return False
     try:
         bullets = format_transcript_as_bullets(client, audio_file, error_log)
+    except QuotaExhausted:
+        raise
     except (OSError, ValueError) as err:
         log_error(
             error_log,
             f"[{local_now():%Y-%m-%d %H:%M:%S}] "
             f"Failed to read source file {audio_file}: {err}",
         )
-        return
+        return False
     if bullets is None or not normalize_block(bullets):
-        return
+        return False
     try:
         with vault_operation_lock():
             write_capture_to_note(
@@ -330,10 +352,13 @@ def process_audio(
             f"[{local_now():%Y-%m-%d %H:%M:%S}] "
             f"Failed to process file {audio_file}: {err}",
         )
+        return False
+    return True
 
 
-def main() -> None:
+def main() -> int:
     client, sources, daily_dir, error_log = load_config()
+    failed = False
     for source in sources:
         source_dir = source.source_dir
         if not source_dir.exists():
@@ -343,8 +368,13 @@ def main() -> None:
                 continue
             if audio_file.suffix.lower() != ".m4a":
                 continue
-            process_audio(client, audio_file, source, daily_dir, error_log)
+            try:
+                if not process_audio(client, audio_file, source, daily_dir, error_log):
+                    failed = True
+            except QuotaExhausted:
+                return 1
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

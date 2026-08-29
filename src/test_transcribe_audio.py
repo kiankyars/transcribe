@@ -307,6 +307,51 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
         self.assertIn("attempt 2: unavailable", final_log)
         self.assertIn("attempt 3: unavailable", final_log)
 
+    def test_quota_exhausted_does_not_retry_or_drain_the_queue(self) -> None:
+        quota = errors.APIError(
+            429,
+            {"error": {"message": "RESOURCE_EXHAUSTED", "status": "RESOURCE_EXHAUSTED"}},
+        )
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            source_dir = temp_path / "notes"
+            source_dir.mkdir()
+            first = source_dir / "2026-08-29 08.49.57.m4a"
+            second = source_dir / "2026-08-29 08.50.09.m4a"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            daily_dir = temp_path / "daily"
+            error_log = temp_path / "errors.log"
+            client = Mock()
+            client.models.generate_content.side_effect = quota
+            source = SimpleEndpoint("notes", None, source_dir)
+
+            with (
+                patch(
+                    "src.transcribe.load_config",
+                    return_value=(client, [source], daily_dir, error_log),
+                ),
+                patch(
+                    "src.transcribe.configured_env",
+                    return_value="gemini-test-model",
+                ),
+                patch("src.transcribe.ensure_local_file", return_value=True),
+                patch("src.transcribe.time.sleep") as sleep,
+                patch("src.transcribe.trash_file") as trash_file,
+            ):
+                status = run_simple_inbox()
+            first_remains = first.exists()
+            second_remains = second.exists()
+            note_exists = (daily_dir / "2026-08-29.md").exists()
+
+        self.assertEqual(status, 1)
+        self.assertEqual(client.models.generate_content.call_count, 1)
+        sleep.assert_not_called()
+        trash_file.assert_not_called()
+        self.assertFalse(note_exists)
+        self.assertTrue(first_remains)
+        self.assertTrue(second_remains)
+
     def test_timed_out_file_does_not_block_the_rest_of_the_queue(self) -> None:
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -344,10 +389,11 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
                 ),
                 patch("src.transcribe.trash_file") as trash_file,
             ):
-                run_simple_inbox()
+                status = run_simple_inbox()
 
             note = (daily_dir / "2026-08-11.md").read_text()
 
+        self.assertEqual(status, 1)
         self.assertEqual(client.models.generate_content.call_count, 4)
         trash_file.assert_called_once_with(second)
         self.assertIn("## Course\n\n- Second recording", note)

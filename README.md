@@ -7,6 +7,11 @@ Transcribes `.m4a` voice memos into Obsidian notes and can also process routed V
 - For each simple-inbox audio file, it generates markdown hyphen bullets.
 - Each Gemini request has a two-minute deadline; timed-out attempts are logged and
   use the existing same-model retry path without holding the rest of the queue forever.
+- A `429 RESOURCE_EXHAUSTED` response stops the rest of the inbox immediately so
+  later files do not burn remaining quota. The LaunchAgent retries hourly in
+  addition to WatchPaths, because quota recovery does not create a filesystem event.
+- The simple ingest exits nonzero when any capture failed, so launchd's last exit
+  code is honest.
 - It writes into `notes/YYYY-MM-DD.md`:
   - files from the resolved `notes` inbox append into the root body of the daily note
   - files from the resolved `course` inbox append into `## Course`
