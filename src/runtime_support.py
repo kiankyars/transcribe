@@ -21,15 +21,20 @@ VOICE_MEMOS_IMPORT_LOCK_PATH = (
 )
 
 
-def configured_env(name: str) -> str:
+def optional_env(name: str) -> str:
     value = os.getenv(name)
     if value and value.strip():
         return value.strip()
-
     home_value = dotenv_values(HOME_ENV_PATH).get(name)
     if isinstance(home_value, str) and home_value.strip():
         return home_value.strip()
+    return ""
 
+
+def configured_env(name: str) -> str:
+    value = optional_env(name)
+    if value:
+        return value
     raise RuntimeError(f"Missing required env var: {name} (set it in {HOME_ENV_PATH})")
 
 

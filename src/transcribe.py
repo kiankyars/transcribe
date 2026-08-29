@@ -23,6 +23,7 @@ try:
         configured_env,
         ensure_local_file,
         log_error,
+        optional_env,
         required_env,
         vault_operation_lock,
     )
@@ -33,6 +34,7 @@ except ImportError:
         configured_env,
         ensure_local_file,
         log_error,
+        optional_env,
         required_env,
         vault_operation_lock,
     )
@@ -95,9 +97,11 @@ def format_transcript_as_bullets(
     )
     max_retries = 3
     attempt_errors: list[str] = []
+    active_client = client
+    fallback_key = optional_env("GEMINI_API_KEY_2")
     for attempt in range(max_retries):
         try:
-            response = client.models.generate_content(
+            response = active_client.models.generate_content(
                 model=model_name,
                 contents=contents,
                 config=request_config,
@@ -106,6 +110,10 @@ def format_transcript_as_bullets(
         except Exception as err:  # noqa: BLE001 - retry transient SDK failures
             attempt_error = f"attempt {attempt + 1}: {err}"
             attempt_errors.append(attempt_error)
+            if is_quota_exhausted(err) and fallback_key:
+                active_client = genai.Client(api_key=fallback_key)
+                fallback_key = ""
+                continue
             if is_quota_exhausted(err):
                 timestamp = local_now().strftime("%Y-%m-%d %H:%M:%S")
                 log_error(
