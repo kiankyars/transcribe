@@ -107,7 +107,7 @@ def format_transcript_as_bullets(
                 config=request_config,
             )
             return (response.text or "").strip()
-        except Exception as err:  # noqa: BLE001 - retry transient SDK failures
+        except Exception as err:
             attempt_error = f"attempt {attempt + 1}: {err}"
             attempt_errors.append(attempt_error)
             if is_quota_exhausted(err) and fallback_key:
