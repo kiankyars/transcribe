@@ -208,7 +208,9 @@ class CodexInvocationTests(unittest.TestCase):
             ffprobe_bin="/opt/homebrew/bin/ffprobe",
             state_path=Path("/tmp/state.json"),
             error_log=Path("/tmp/error.log"),
-            vault_root=Path("/Users/kian/obsidian"),
+            vault_root=Path(
+                "/Users/kian/Library/Mobile Documents/com~apple~CloudDocs/obsidian"
+            ),
             voice_memos_dir=Path("/Users/kian/Library/Voice Memos"),
         )
 
@@ -247,11 +249,14 @@ class CodexInvocationTests(unittest.TestCase):
                 "-c",
                 "sandbox_workspace_write.network_access=false",
                 "-C",
-                "/Users/kian/obsidian",
+                "/Users/kian/Library/Mobile Documents/com~apple~CloudDocs/obsidian",
                 "-",
             ],
         )
-        self.assertEqual(run.call_args.kwargs["cwd"], "/Users/kian/obsidian")
+        self.assertEqual(
+            run.call_args.kwargs["cwd"],
+            "/Users/kian/Library/Mobile Documents/com~apple~CloudDocs/obsidian",
+        )
         self.assertEqual(run.call_args.kwargs["input"], "prompt")
 
     @patch("src.import_voice_memos.log_error")

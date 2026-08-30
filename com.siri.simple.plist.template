@@ -6,6 +6,7 @@
     <string>__LABEL__</string>
     <key>ProgramArguments</key>
     <array>
+        <string>/bin/zsh</string>
         <string>__RUN_SCRIPT__</string>
     </array>
     <key>WatchPaths</key>

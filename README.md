@@ -78,3 +78,5 @@ Uninstall:
 - `./src/uninstall_launchd.sh`
 
 These are built from the templates `com.siri.simple.plist.template` and `com.siri.voice-memos.plist.template`.
+Both LaunchAgents invoke `/bin/zsh` explicitly so the background jobs use its
+Full Disk Access grant when reading iCloud and the Obsidian vault.
