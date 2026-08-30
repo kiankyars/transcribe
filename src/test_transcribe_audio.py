@@ -387,6 +387,43 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
         self.assertEqual(primary.models.generate_content.call_count, 1)
         self.assertEqual(fallback.models.generate_content.call_count, 1)
 
+    def test_capacity_errors_fall_back_to_second_api_key(self) -> None:
+        for code, status in ((503, "UNAVAILABLE"), (504, "DEADLINE_EXCEEDED")):
+            with self.subTest(code=code), TemporaryDirectory() as temp_dir:
+                audio_file = Path(temp_dir) / "memo.m4a"
+                audio_file.write_bytes(b"audio")
+                primary = Mock()
+                primary.models.generate_content.side_effect = errors.ServerError(
+                    code,
+                    {"error": {"code": code, "message": status, "status": status}},
+                )
+                fallback = Mock()
+                fallback.models.generate_content.return_value = SimpleNamespace(
+                    text="- Hello"
+                )
+
+                with (
+                    patch(
+                        "src.transcribe.configured_env",
+                        return_value="gemini-test-model",
+                    ),
+                    patch("src.transcribe.optional_env", return_value="fallback-key"),
+                    patch(
+                        "src.transcribe.genai.Client",
+                        return_value=fallback,
+                    ) as client_cls,
+                ):
+                    transcript = format_transcript_as_bullets(
+                        primary,
+                        audio_file,
+                        Path(temp_dir) / "errors.log",
+                    )
+
+                self.assertEqual(transcript, "- Hello")
+                client_cls.assert_called_once_with(api_key="fallback-key")
+                self.assertEqual(primary.models.generate_content.call_count, 1)
+                self.assertEqual(fallback.models.generate_content.call_count, 1)
+
     def test_quota_fallback_gets_its_own_retry_budget(self) -> None:
         quota = errors.APIError(
             429,

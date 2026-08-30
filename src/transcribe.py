@@ -79,6 +79,12 @@ def is_quota_exhausted(err: BaseException) -> bool:
     return err.code == 429 or "RESOURCE_EXHAUSTED" in str(err)
 
 
+def should_use_fallback_key(err: BaseException) -> bool:
+    if is_quota_exhausted(err):
+        return True
+    return isinstance(err, errors.APIError) and err.code in {503, 504}
+
+
 def format_transcript_as_bullets(
     client: genai.Client,
     audio_file: Path,
@@ -112,7 +118,7 @@ def format_transcript_as_bullets(
         except Exception as err:
             attempt_error = f"attempt {attempt}: {err}"
             attempt_errors.append(attempt_error)
-            if is_quota_exhausted(err) and fallback_key:
+            if should_use_fallback_key(err) and fallback_key:
                 active_client = genai.Client(api_key=fallback_key)
                 fallback_key = ""
                 attempt = 0
