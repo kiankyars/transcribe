@@ -99,7 +99,9 @@ def format_transcript_as_bullets(
     attempt_errors: list[str] = []
     active_client = client
     fallback_key = optional_env("GEMINI_API_KEY_2")
-    for attempt in range(max_retries):
+    attempt = 0
+    while attempt < max_retries:
+        attempt += 1
         try:
             response = active_client.models.generate_content(
                 model=model_name,
@@ -108,11 +110,12 @@ def format_transcript_as_bullets(
             )
             return (response.text or "").strip()
         except Exception as err:
-            attempt_error = f"attempt {attempt + 1}: {err}"
+            attempt_error = f"attempt {attempt}: {err}"
             attempt_errors.append(attempt_error)
             if is_quota_exhausted(err) and fallback_key:
                 active_client = genai.Client(api_key=fallback_key)
                 fallback_key = ""
+                attempt = 0
                 continue
             if is_quota_exhausted(err):
                 timestamp = local_now().strftime("%Y-%m-%d %H:%M:%S")
@@ -129,8 +132,8 @@ def format_transcript_as_bullets(
                     f"[{local_now():%Y-%m-%d %H:%M:%S}] "
                     f"Gemini request failed for {audio_file} ({attempt_error})",
                 )
-            if attempt < max_retries - 1:
-                time.sleep(2**attempt)
+            if attempt < max_retries:
+                time.sleep(2 ** (attempt - 1))
 
     timestamp = local_now().strftime("%Y-%m-%d %H:%M:%S")
     details = (

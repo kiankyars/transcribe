@@ -387,6 +387,45 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
         self.assertEqual(primary.models.generate_content.call_count, 1)
         self.assertEqual(fallback.models.generate_content.call_count, 1)
 
+    def test_quota_fallback_gets_its_own_retry_budget(self) -> None:
+        quota = errors.APIError(
+            429,
+            {"error": {"message": "RESOURCE_EXHAUSTED", "status": "RESOURCE_EXHAUSTED"}},
+        )
+        with TemporaryDirectory() as temp_dir:
+            audio_file = Path(temp_dir) / "memo.m4a"
+            audio_file.write_bytes(b"audio")
+            primary = Mock()
+            primary.models.generate_content.side_effect = [
+                TimeoutError("first timeout"),
+                TimeoutError("second timeout"),
+                quota,
+            ]
+            fallback = Mock()
+            fallback.models.generate_content.return_value = SimpleNamespace(
+                text="- Hello"
+            )
+
+            with (
+                patch(
+                    "src.transcribe.configured_env",
+                    return_value="gemini-test-model",
+                ),
+                patch("src.transcribe.optional_env", return_value="fallback-key"),
+                patch("src.transcribe.genai.Client", return_value=fallback),
+                patch("src.transcribe.time.sleep"),
+                patch("src.transcribe.log_error"),
+            ):
+                transcript = format_transcript_as_bullets(
+                    primary,
+                    audio_file,
+                    Path(temp_dir) / "errors.log",
+                )
+
+        self.assertEqual(transcript, "- Hello")
+        self.assertEqual(primary.models.generate_content.call_count, 3)
+        self.assertEqual(fallback.models.generate_content.call_count, 1)
+
     def test_timed_out_file_does_not_block_the_rest_of_the_queue(self) -> None:
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
