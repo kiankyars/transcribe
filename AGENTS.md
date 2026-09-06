@@ -20,10 +20,6 @@
   hashes, or recovery markers to vault notes.
 - Runtime code and wrappers must not mutate or synchronize
   Git repositories. Vault synchronization belongs to separate vault automation.
-- This repository must not watch or import the macOS Voice Memos library.
-- Manual conversation ingestion may retain audio and update the user-specified
-  `people/` note. It must not add follow-ups or modify `notes/YYYY-MM-DD.md`
-  unless the user explicitly requests that specific daily-note edit.
 
 ## Build, Test, and Development Commands
 - `uv sync`: install/update the virtual environment and dependencies.

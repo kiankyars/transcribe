@@ -22,8 +22,6 @@ Transcribes `.m4a` files from two configured iCloud inboxes into Obsidian daily 
   - The lock coordinates Siri with the vault synchronizer. External editors do not participate in that advisory lock; the writer rebuilds on changes it detects before replacement, while the synchronizer's settle window provides the broader safety net.
 - Siri ingestion never stages, commits, pulls, fetches, merges, rebases, or pushes
   a repository. Repository synchronization belongs to separate vault automation.
-- This repository does not watch the macOS Voice Memos library or invoke Codex.
-- Conversation recordings are handled manually: identify the participant, retain useful audio under the vault's `audio/` directory, and update the relevant `people/` note. Do not add follow-ups or otherwise modify a daily note unless the user explicitly requests that specific edit.
 
 ## Setup
 
