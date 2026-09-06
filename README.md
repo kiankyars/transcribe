@@ -1,6 +1,6 @@
 # siri
 
-Transcribes `.m4a` voice memos into Obsidian notes and can also process routed Voice Memos directly from the synced macOS Voice Memos library.
+Transcribes `.m4a` files from two configured iCloud inboxes into Obsidian daily notes.
 
 ## Behavior
 
@@ -22,23 +22,8 @@ Transcribes `.m4a` voice memos into Obsidian notes and can also process routed V
   - The lock coordinates Siri with the vault synchronizer. External editors do not participate in that advisory lock; the writer rebuilds on changes it detects before replacement, while the synchronizer's settle window provides the broader safety net.
 - Siri ingestion never stages, commits, pulls, fetches, merges, rebases, or pushes
   a repository. Repository synchronization belongs to separate vault automation.
-- Agentic Voice Memos processing:
-  - a process-wide importer lock prevents the watcher, manual runner, and direct entry point from loading and applying the same stale state concurrently; successful records are atomically checkpointed immediately
-  - watches the macOS Voice Memos store
-  - rescans recordings that arrive or finish syncing during an active importer run before exiting
-  - processes recordings renamed exactly `monde` or `réflexion`
-  - reads the original recording directly from the Voice Memos library
-  - transcribes with `GEMINI_MODEL` from `~/.env`, with no local or alternate-model fallback, before starting Codex
-  - gives the sandbox a temporary audio copy, leaving the original Voice Memo outside the agent's writable roots
-  - preserves only the configured Codex model, reasoning effort, and service tier while excluding user tools and execution rules
-  - starts Codex in the Obsidian vault with workspace-only writes, approval escalation disabled, and shell network access disabled
-  - holds the same vault operation lock used by the independent vault synchronizer while Codex edits vault content
-  - gives Codex the temporary recording path, date, route, and transcript, then lets it use the vault context and its judgment to make every appropriate content edit
-  - the skill identifies `people/{first-name}.md`, `notes/YYYY-MM-DD.md`, and `audio/` as the stable vault environment without prescribing a rigid output format
-  - after editing, Codex re-reads the affected content and leaves all repository synchronization outside the Siri workflow
-  - leaves source memos in Voice Memos for manual deletion
-
-The agentic skill lives in the vault at `.agents/skills/process-voice-memo/SKILL.md`. The Siri repository only detects routed recordings and hands each one to the vault agent.
+- This repository does not watch the macOS Voice Memos library or invoke Codex.
+- Conversation recordings are handled manually: identify the participant, retain useful audio under the vault's `audio/` directory, and update the relevant `people/` note. Do not add follow-ups or otherwise modify a daily note unless the user explicitly requests that specific edit.
 
 ## Setup
 
@@ -52,31 +37,26 @@ Required env vars:
 - `VOICE_MEMOS_DIR_1`
 - `OBSIDIAN_DAILY_DIR`
 
-Set `GEMINI_MODEL` once in `~/.env`; both transcription paths read that shared value.
+Set `GEMINI_MODEL` once in `~/.env`; both the inbox flow and single-file helper read it.
 
 Error logs are written to `logs/siri_errors.log` by default.
-Agentic Voice Memos processed-file state is written to `logs/voice_memos_import_state.json`.
 
 ## Run manually
 
 - `./src/siri.sh`
 - `./src/run_simple_ingest.sh`
-- `./src/run_voice_memos_ingest.sh`
 - `uv run siri-transcribe-audio /path/to/recording.m4a -o /tmp/transcript.txt`
 
 ## Install launchd watchers
 
-Both LaunchAgents run on the **same machine** (the personal Mac that has access to the iCloud audio sources). The primary (and only needed) command is:
+The LaunchAgent runs on the Mac that has access to the configured iCloud audio sources. The only installation command needed is:
 
 - `./src/install_launchd.sh`
-  - Installs/refreshes **both** agents:
-    - `com.siri.simple`: watches the resolved `notes`/`course` iCloud folders and runs `src/run_simple_ingest.sh`
-    - `com.siri.voice-memos`: watches the Voice Memos library and runs `src/run_voice_memos_ingest.sh`
+  - Installs or refreshes `com.siri.simple`, which watches the resolved `notes` and `course` inboxes and runs `src/run_simple_ingest.sh`.
 
 Uninstall:
 
 - `./src/uninstall_launchd.sh`
 
-These are built from the templates `com.siri.simple.plist.template` and `com.siri.voice-memos.plist.template`.
-Both LaunchAgents invoke `/bin/zsh` explicitly so the background jobs use its
+The LaunchAgent is built from `com.siri.simple.plist.template` and invokes `/bin/zsh` explicitly so the background job uses its
 Full Disk Access grant when reading iCloud and the Obsidian vault.

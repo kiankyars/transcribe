@@ -20,7 +20,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 only-include = [
     "src/__init__.py",
-    "src/import_voice_memos.py",
     "src/runtime_support.py",
     "src/simple_endpoints.py",
     "src/transcribe.py",

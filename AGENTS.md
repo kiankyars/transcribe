@@ -3,15 +3,13 @@
 ## Project Structure & Module Organization
 - Simple inbox transcription lives in `src/transcribe.py`.
 - Reusable Gemini audio transcription lives in `src/transcribe_audio.py`.
-- Routed Voice Memos discovery and agent invocation live in `src/import_voice_memos.py`.
 - Operational scripts are in `src/`:
-  - `src/siri.sh` runs both ingestion flows locally.
+  - `src/siri.sh` runs the simple inbox flow locally.
   - `src/run_simple_ingest.sh` runs the iCloud inbox transcription flow.
-  - `src/run_voice_memos_ingest.sh` runs the Voice Memos import flow.
-  - `src/install_launchd.sh` installs/refreshes both LaunchAgents (the only command needed; both run on the personal Mac).
-  - `src/uninstall_launchd.sh` removes both LaunchAgents.
-- Launchd templates are `com.siri.simple.plist.template` and `com.siri.voice-memos.plist.template`.
-- Runtime logs are written under `logs/` (e.g. `launchd_simple_*.log`, `launchd_voice_memos_*.log`, `siri_errors.log`).
+  - `src/install_launchd.sh` installs or refreshes `com.siri.simple`.
+  - `src/uninstall_launchd.sh` removes it.
+- The launchd template is `com.siri.simple.plist.template`.
+- Runtime logs are written under `logs/` (for example, `launchd_simple_*.log` and `siri_errors.log`).
 - Project metadata and dependencies are defined in `pyproject.toml`.
 
 ## Runtime Boundary
@@ -20,22 +18,23 @@
 - Vault writes must use the shared kernel-held vault operation lock. Simple note
   replacement must remain atomic under concurrent edits. Do not add ingestion IDs,
   hashes, or recovery markers to vault notes.
-- Routed Voice Memo entry points must share the importer lock so only one process
-  can load, apply, and save routing state at a time.
-- Runtime code, wrappers, and invoked-agent prompts must not mutate or synchronize
+- Runtime code and wrappers must not mutate or synchronize
   Git repositories. Vault synchronization belongs to separate vault automation.
+- This repository must not watch or import the macOS Voice Memos library.
+- Manual conversation ingestion may retain audio and update the user-specified
+  `people/` note. It must not add follow-ups or modify `notes/YYYY-MM-DD.md`
+  unless the user explicitly requests that specific daily-note edit.
 
 ## Build, Test, and Development Commands
 - `uv sync`: install/update the virtual environment and dependencies.
 - `./src/siri.sh`: run the transcription flow manually.
-- `./src/install_launchd.sh`: install and start both `com.siri.simple` and `com.siri.voice-memos` LaunchAgents (the only command needed).
-- `./src/uninstall_launchd.sh`: remove both.
-- `uvx ruff check src/import_voice_memos.py src/test_ingest.py`: lint agentic Voice Memos code.
+- `./src/install_launchd.sh`: install and start `com.siri.simple`.
+- `./src/uninstall_launchd.sh`: remove it.
 - `uvx ruff check src/transcribe.py`: lint simple inbox transcription code.
 - `uvx ruff check src/transcribe_audio.py src/test_transcribe_audio.py`: lint the reusable Gemini transcription helper.
 - `uv run siri-transcribe-audio /path/to/recording.m4a`: transcribe one recording with the `GEMINI_MODEL` selected in `~/.env`.
 - `uv run python -m unittest discover -s src -p 'test_*.py'`: run focused unit tests.
-- `uv run python -m py_compile src/transcribe.py src/transcribe_audio.py src/import_voice_memos.py`: quick syntax validation.
+- `uv run python -m py_compile src/transcribe.py src/transcribe_audio.py src/runtime_support.py src/simple_endpoints.py`: quick syntax validation.
 
 ## Coding Style & Naming Conventions
 - Python 3.10+ with 4-space indentation and type hints where practical.
@@ -50,9 +49,9 @@
 ## Testing Guidelines
 - Validate changes with:
   1. `uv run python -m unittest discover -s src -p 'test_*.py'`
-  2. `uvx ruff check src/import_voice_memos.py src/test_ingest.py`
-  3. `uv run python -m py_compile src/transcribe.py src/transcribe_audio.py src/import_voice_memos.py`
-  4. Manual smoke run with a sample `.m4a` in a configured voice memo directory.
+  2. `uvx ruff check src/transcribe.py src/transcribe_audio.py src/runtime_support.py src/simple_endpoints.py src/test_transcribe_audio.py`
+  3. `uv run python -m py_compile src/transcribe.py src/transcribe_audio.py src/runtime_support.py src/simple_endpoints.py`
+  4. Manual smoke run with a sample `.m4a` in a configured inbox.
 - Verify expected output file append behavior. Confirm source-to-Trash failures are
   logged and retain the source for a full retry.
 
