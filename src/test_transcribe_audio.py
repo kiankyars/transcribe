@@ -481,7 +481,7 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
                 TimeoutError("request timed out"),
                 SimpleNamespace(text="- Second recording"),
             ]
-            source = SimpleEndpoint("course", "## Course", source_dir)
+            source = SimpleEndpoint("course", "## Course à Pied", source_dir)
 
             with (
                 patch(
@@ -507,7 +507,7 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(client.models.generate_content.call_count, 4)
         trash_file.assert_called_once_with(second)
-        self.assertIn("## Course\n\n- Second recording", note)
+        self.assertIn("## Course à Pied\n\n- Second recording", note)
         self.assertNotIn("first", note.lower())
 
     def test_note_write_rebuilds_after_a_concurrent_edit(self) -> None:
@@ -576,7 +576,7 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
             note = daily_dir / "2026-08-16.md"
             note.write_text("Existing note\n", encoding="utf-8")
             error_log = temp_path / "errors.log"
-            source = SimpleEndpoint("course", "## Course", source_dir)
+            source = SimpleEndpoint("course", "## Course à Pied", source_dir)
             client = Mock()
             client.models.generate_content.return_value = SimpleNamespace(
                 text="- Captured idea"
@@ -623,7 +623,7 @@ class SimpleInboxTranscriptionTests(unittest.TestCase):
             client.models.generate_content.return_value = SimpleNamespace(
                 text="- Second capture"
             )
-            source = SimpleEndpoint("course", "## Course", source_dir)
+            source = SimpleEndpoint("course", "## Course à Pied", source_dir)
 
             def fail_one_note(target_file):
                 if target_file.name == "2026-08-15.md":

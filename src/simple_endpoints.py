@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-COURSE_HEADING = "## Course"
+COURSE_HEADING = "## Course à Pied"
 
 
 @dataclass(frozen=True)

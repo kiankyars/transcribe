@@ -2,6 +2,7 @@
 
 ## Project Structure & Module Organization
 - Simple inbox transcription lives in `src/transcribe.py`.
+- `src/simple_endpoints.py` routes running dictations from `course` into `## Course à Pied`.
 - Reusable Gemini audio transcription lives in `src/transcribe_audio.py`.
 - Operational scripts are in `src/`:
   - `src/siri.sh` runs the simple inbox flow locally.

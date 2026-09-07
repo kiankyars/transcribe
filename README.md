@@ -14,7 +14,7 @@ Transcribes `.m4a` files from two configured iCloud inboxes into Obsidian daily 
   code is honest.
 - It writes into `notes/YYYY-MM-DD.md`:
   - files from the resolved `notes` inbox append into the root body of the daily note
-  - files from the resolved `course` inbox append into `## Course`
+  - running dictations from the resolved `course` inbox append into `## Course à Pied`
   - if the daily note does not exist, it is created
 - `notes` is the catch-all simple inbox for podcasts, books, reading thoughts, and other uncategorized captures.
 - After a simple-ingest `.m4a` is successfully appended into the daily note, the source file is moved to macOS Trash.
